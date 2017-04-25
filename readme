@@ -1,0 +1,22 @@
+About the Directory structure:
+------------------------------
+include     - Header files for the kernel and kernel's user
+kernel      - Contains the source code for the kernel.
+m68k        - Contains the machine specific layer for M68K.
+
+Todo-list:
+    1. ISRs for
+        RESET
+        Bus Error
+        Address Error
+        TRAP
+        TRAPV
+        CHK
+        Illegal Instruction
+        Previlege Violation
+        Un-initialised Interrupt Vector
+        Spurious Interrupt
+        Trace
+        Auto Vector (1-7)
+    2. Boot Code
+    3. Kernel Code
