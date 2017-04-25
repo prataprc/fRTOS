@@ -1,7 +1,7 @@
 This repository contains reference code that I have used to implement a
 functional Real-Time-Operating-System, a long time back.
 
-Subsequently in another project I had to experiment this on M68K processor.
+Subsequently in another project I had to experiment this for M68K processor.
 
 About the Directory structure
 -----------------------------
