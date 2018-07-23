@@ -1,0 +1,5 @@
+The general procedure for start up code is this.
+
+	- Initialise the processor, I/O, PIC, Timer, Memory etc.
+	- Setup the environment for the OS.
+	- Give the control the OS.

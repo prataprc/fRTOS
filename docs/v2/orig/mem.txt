@@ -1,0 +1,535 @@
+Memory Management
+=================
+
+
+
+Prolog:
+-------
+  
+     - The internal memory on the Clarkspur DSP is divided into two memory 
+	banks (RAM0 or RAM1 and DRAM in RAM0/RAM1), which can be specified 	by the user while allocating memory.
+
+     - C3 and SRC use dedicated memory regions on DSP1.
+
+     - The remaining memory is divided into memory pools ,which can be 				created by the user as well as some existing as kernel memory 				pools.
+     
+     - This is a free -list memory implementation ,wherein chunks are 	
+	allocated from each pool.
+	The free list is searched in order until a block of memory is 			found that is as least as large as the one desired by the		allocation. The block is then carved into two pieces: 	one large enough to hold the desired allocation, and 	one containing the remainder of the block after 	the allocation is done. The remainder block is returned to 	the free list for the next allocation. 
+
+     - Since the Clarkspur DSP is word addressable    
+
+     - We may have three memory pools ,one for blocks of size varying 				from 0-64 words,one for blocks from 64words - 1 Kwords and one pool
+	for blocks of sizes from 1kwords- 5Kwords , depending on the system 	memory requirements.
+
+
+
+External interfaces supplied by the kernel
+------------------------------------------
+
+	*) create_mem_pool - Create a user memory pool
+
+	*) delete_mem_pool - Delete a user memory pool
+
+	*) mem_alloc       - allocate a block from a user memory pool  
+
+	*) mem_free        - free a block from a user memory pool  
+
+	*) mem_status	  - get the available memory from a user memory
+			    pool
+
+
+	*) kmem_alloc      - allocate a block from a kernel memory pool  
+
+	*) kmem_free       - free a block from a kernel memory pool  
+
+	*) kmem_status	 - get the available memory from a kernel memory 					   pool
+
+External structures
+-------------------       	
+
+1) mem_pool_list
+----------------
+		
+	struct mem_pool_list {
+			ADDRESS *start_address;
+			ADDRESS *end_address;			
+			int blocksize;
+			struct mem_block_list *block_free_list;
+			struct mem_block_list *alloc_list;
+			struct mem_pool_list *next;
+
+	}mem_pool_list_RAM0;
+
+
+Data Field:
+				
+	start_address - This specifies the start address of the memory 			pool.
+	end_address   - end address of the memory pool (optional)
+
+	blocksize     - initial size of the blocks that the memory pool is 			split  into
+        block_free_list- pointer to the list of free blocks
+        alloc_list     - pointer to the list of allocated blocks.
+
+
+A similar list is maintained for memory bank RAM1
+
+
+2) mem_block_list
+-----------------
+
+	struct mem_block_list {
+			
+			ADDRESS *address;
+			int size;
+			struct mem_block_list *next;
+	};
+
+
+Data Fields:
+	
+	address - start address of the block.
+	size    - size of the block in words
+
+3) kmem_pool_list
+-----------------
+the kernel maintains a list of the kernel memory pools in RAM0 and RAM1
+
+
+	struct kmem_pool_list {
+		ADDRESS *start_address;
+		ADDRESS *end_address;
+		size_t   blocksize;
+        	kmem_block_list* block_free_list;
+	        kmem_block_list* alloc_list;  
+ 
+       } kmem_pool_list_RAM0;
+
+a similar  list exists for the kernel memory pools in RAM1.
+
+Symbolic constants:
+-------------------
+
+	ERROR   	-1
+	NOERROR		 0
+	
+
+
+
+
+Memory Management Functions:
+===========================
+
+
+
+1)Create a memory pool 
+
+int create_mem_pool(int *mem_pool_id,int size_in_words,int block_size, int mem_attr)
+
+
+	Parameters 
+	-----------
+
+		mem_pool_id   - Memory Pool ID returned by the m-kernel.
+	
+		size_in_words - Size of the memory pool in words.
+	
+		mem_attr      - used to indicate which memory bank is to be used 				(either RAM0 or RAM1)
+
+
+NOTE : Here we assume that two different memory banks used (RAM0 or RAM1),can be specified  by the user (application). Therefore the mem_pool_id returned can be indicative of the block being used.
+
+	Return value 
+	------------
+	
+	0 : success
+	-1: failure (Insufficient memory available)
+
+
+
+A memory pool of the specified size is created in either RAM0 or
+RAM1 memory area as specified and a  mem_pool_id is assigned. 
+A block size may be specified ,which is the initial size of blocks according to which the memory pool is divided.
+
+
+
+	Global variables modified:
+	-------------------------
+
+	An entry is made in the global mem_pool_list_RAM0/RAM1
+
+	Functionality
+	-------------
+
+	/*get start address of the mem_pool according to the size specified*/
+	
+          mem_pool_list->start_address =get_start_address(size);
+	
+	- init_mem_pool(block_size)   --- optional
+          Split the memory pool into blocks of the specified size 
+		
+	  mem_block_list *current = mem_pool_list->free_block_list;		
+	  current->start =  mem_pool_list->start_address;
+	  current->size  =  blocksize; 
+			
+	while (not end of mem_pool)
+	{
+		current->next = current->start + blocksize;
+		 	
+	}
+
+	/* Assign mem_pool_id of memory pool*/
+	  
+ 	  *mem_pool_id = some id;
+
+
+
+
+2) Delete a memory pool
+
+int delete_mem_pool(int mem_pool_id)
+
+	Parameters
+	mem_pool_id - Memory Pool ID of the memory pool to be removed.
+
+	Return value 
+	0 : success
+	-1: failure (Invalid memory pool ID)
+
+
+Used to delete  a memory pool specifed by mem_pool_id.
+
+	Global variables modified
+	-------------------------
+	mem_pool_list_RAM0/RAM1
+
+A search  is made in the global memory_pool_list and the corresponding entry is deleted and the 
+memory is freed.
+
+	Functionality
+	-------------
+	/*Search the global mem_pool_list_RAM0/RAM1 based on the 	  mem_pool_id*/
+	  
+	    mem_pool_list *current_pool = get_current_pool(mem_pool_id);
+	
+	/*Check if any of blocks of the memory pool are still allocated. Return error*/
+	  
+            if (current_pool->block_free_list != NULL)
+	    {
+		return (ERROR);
+	     }
+	
+	/* Else free memory associated with the memory pool 
+	  Remove the entry from global mem_pool_list_RAM0/RAM1  */
+
+          free(mem_pool_id);
+	  	 	 
+	  return(NOERROR); 			          	 	  
+
+
+3) int mem_alloc (int mem_pool_id, int** start_address, int size_in_words)
+
+	Parameters
+	----------
+	mem_pool_id   - Memory Pool ID.
+	start address - start address of the block allocated.
+
+	return value
+	------------
+	0: success
+	-1: failure (insufficient memory available)
+
+
+Used to allocate a block of size size_in_words from the user memory pool specified by mem_pool_id. start_address is filled with the start address of the block that has been allocated.
+After searching for the appropriate entry in the memory pool list of the appropriate memory bank i.e RAM0 or RAM1 ,the block_free_list is checked to see if it is Non-NULL. If there is a free block then that entry is removed from the block_free_list and and entry is added  in alloc list  the start address is returned.
+
+
+
+	Global variables modified
+	-------------------------
+	mem_pool_list_RAM0/RAM1
+
+	
+	
+	Functionality
+	-------------
+
+	void mem_alloc( int mem_pool_id, int **start_address, int size_in_words)
+	{ 
+
+	 /* Search the mem_pool_list_RAM0/RAM1 based on the mem_pool_id 			specified*/
+	
+	   current_pool = get_mem_pool(mem_pool_id)
+	   if ( current_pool == NULL)
+		return(ERROR)         /*Invalid mem_pool_id */
+	
+	/*Search the block_free_list in that memory pool for the smallest           	block of the required size that is free (Best Fit ) */
+
+	
+	 mem_block_list *current_block;
+	 mem_block_list temp;
+	 current_block = current_pool->block_free_list; 
+
+	 while(not end of block_free_list)
+	 {
+           if(current_block->size <= size_in_words)
+           {
+          	/* Smallest hole which is large enough for the required size */	
+	  
+        	/*  Get the starting address of the block */
+
+            	alloc_address = current_block->start_address;
+	  
+ 	  	if (current_block->size <= size_in_words)
+	    	{
+                	remove_block (block_free_list , current_block);
+	                add_block    (alloc_list, current_block);
+		}	
+                 
+			
+		/*Update that block's size and start address fields in the free list */
+  
+		    current_block->start_address += size_in_words;
+		    current_block->size	   	 -= size_in_words;
+            
+	  	
+	   }	
+          current_block = current_block_next;
+	}
+       
+        /* If no free block of the specified size is available */
+	/* Try to coaelsce adjacent blocks to form a contiguous block */
+	
+	current = current_pool-> block_free_list;
+	
+        while (not end of block_free_list)
+	{
+	   temp = current_block;
+ 	   coal_size = 0;	
+	   
+	   /* Traverse down the block list to find adjacent blocks with size fitting the requirement*/
+	   
+	   while ((temp->start_address + temp->size) != temp->next)
+	   {
+		coal_size += temp->size;
+		
+		/* If size of the adjacent  blocks is less than the required size */
+
+		if (coal_size <= size_in_words)
+		{
+		  /* Coalesce the adjacent blocks */
+		  current->next = temp->next;
+		  current->size = coal_size;
+		 }
+             current = current->next;
+	  }
+ 
+ 	   /* Allocate memory from this new block */
+	   
+		alloc_address = current_block->start_address;
+	  
+ 	      	remove_block (block_free_list , current_block);
+	        add_block    (alloc_list, current_block);
+				
+		/*Update that block's size and start address fields in the free list */
+  
+		    current_block->start_address += size_in_words;
+		    current_block->size	   	 -= size_in_words;	
+                    
+                    if (current_block->size == 0)
+			free(current_block);
+	
+       }
+          	 			  	    
+	/* If no adjacent blocks can be colesced */
+	  
+	  return(ERROR)
+        
+	/* Else update start_address and return with NOERROR */
+	
+	  *start_address = current_block->start_address;
+	  return(NOERROR);		  	
+
+
+
+
+4) int mem_free(int mem_pool_id,int start_address)
+
+	Parameters
+	----------
+	mem_pool_id    Memory Pool ID 
+	start_address  address of the block to be freed.
+
+	return value
+	------------
+	0: success
+	-1: failure (invalid memory pool ID)
+                    (invalid start address specified)
+
+Releases the block specified by start_address and returns it to the free_block_list within mem_pool_list.
+
+	
+	Global variables modified
+	-------------------------
+
+	mem_pool_list
+	
+	Functionality
+	-------------
+	/* Search the mem_pool_list_RAM0/RAM1 based on the mem_pool_id 
+	  specified */
+	
+	   current_pool = get_mem_pool(mem_pool_id)
+	   if ( current_pool == NULL)
+		return(ERROR)         /*Invalid mem_pool_id */
+
+	/* Search for the appropriate block from the alloc list. If block with that start address not found ,return error */
+
+	  current_block = current_pool->alloc_list;
+	   
+	  while(current_block != NULL)
+	  {
+	
+	      if (current_block->address == start_address)
+	      {
+		remove_block (alloc_list, current_block);
+		add_block    (block_free_list, current_block);  /* Add block to 		the free list sorted in ascending order according to starting 		address */
+
+	       }
+	           current_block =current_block_next;
+	   }
+ 	
+		
+           	 			
+5) int mem_status(int mem_pool_id, int *avail_mem_in_words)
+	
+	Parameters
+	----------
+	mem_pool_id    Memory Pool ID 
+	avail_mem_in_words  No of words of memory available within that pool
+
+	return value
+	------------
+	0: success
+	-1: failure (invalid mem_pool_id specified)
+
+
+
+Checks the memory pool specified by mem_pool_id for the available memory from that pool.avail_mem_in_words is filled with the available memory from that pool.
+
+	Global variables modified
+	-------------------------
+	NONE
+
+	
+	Functionality
+	-------------
+
+	/* Search the mem_pool_list_RAM0/RAM1 based on the mem_pool_id specified */
+	
+	   current_pool = get_mem_pool(mem_pool_id)
+	   if ( current_pool == NULL)
+		return(ERROR)         /*Invalid mem_pool_id */
+
+	  mem_block_list current_block;
+	  current_block = current_pool->block_free_list;	
+	  int total_size = 0;
+           
+           while (current_block->next != end_of_list)
+	   {
+           	total_size += current_block->size;
+		current_block = current_block->next;
+	    }
+ 	   
+	/* Update the avail_mem_in_words variable */
+		
+		*avail_mem_in_words = total_size;
+		return(NOERROR);
+          	
+	
+
+
+KERNEL MEMORY POOLS
+-------------------
+
+In addition to the user memory pools ,there is some memory set aside by the kernel ,as kernel memory pools.There may be more than one kernel memory pool, each pool having different block sizes. A block can be requested by the user,using the following calls.
+
+
+6) kmem_alloc (int *kmem_pool_id ,int **start_address, int size_in_words,int mem_atttr)
+
+	Parameters
+	----------
+	kmem_pool-id  - memory pool ID of the kernel memory pool.
+	start_address - start address of the memory block.
+	size_in_words - specifies the size of the memory requested.
+	mem_attr      - Indicates which memory bank is to be used (either 				RAM0 or RAM1)
+
+	return value
+	------------
+	0: success
+	-1: failure (insufficient kernel memory available)
+
+	Global variables modified
+	-------------------------
+
+	kmem_pool_list
+
+The kernel maintains a list of the kernel memory pools in memory banks RAM0 and RAM1
+A search is made of the kmem_pool_list_RAM0/RAM1 and block_free_list is checked to see if it is non NULL. If that is the case then the entry is removed from block_free_list and added to alloc_list. 
+The start_address variable is filled  with the start address of the block and kernel memory pool ID is assigned. 
+
+	Functionality
+	-------------
+	See mem_alloc()
+
+
+
+7) kmem_free (int kmem_pool_id,int start_address)
+
+	Parameters
+	----------
+
+	kmem_pool-id  - Kernel memory pool ID. 
+	start_address - start address of the memory block.
+
+	return value
+	------------
+	0: success
+	-1: failure (invalid start address specified)
+                    (invalid kernel memory pool id)     
+
+Releases the block specified by start_address and returns it to the free_block_list within kmem_pool_list_RAM0/RAM1 (depending on where the block was allocated)
+
+	Functionality
+	-------------
+	See mem_free()
+
+
+
+8) int kmem_status(int kmem_pool_id, int *avail_mem_in_words)
+	
+	Parameters
+	----------
+	mem_pool_id    	    Memory Pool ID 
+	avail_mem_in_words  No of words of memory available within that 	pool
+
+	return value
+	------------
+	 0: success
+	-1: failure (invalid start address specified)
+		    (invalid kernel memory pool id)  
+
+
+Checks the memory pool specified by kmem_pool_id, and fills the avail_mem_in_words variable  with the available memory from that kernel memory pool.
+
+	Global variables modified
+	-------------------------
+	NONE
+
+	Functionality
+	-------------
+	See mem_status()
+
+
+
+

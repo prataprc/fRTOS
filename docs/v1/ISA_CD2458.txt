@@ -1,0 +1,118 @@
+Any Instruction Set Architecture can be broadly divided into
+
+	1. Data transfer Instructions.
+		Register to register
+		Register/memory to memory/register
+		Memory to memory
+		register/io to io/register
+		Immediate data
+		Stack
+	2. Arithametic and logical.
+		Addition
+		Subraction
+		Multiplication
+		Division
+		Shift and rotate.
+		logical operations AND, OR, NOT, EXOR, ONES complement
+	3. Special instructions
+
+
+Registers:
+	AL(24), AH(24), X(24), Y(24), PL(24), PH(24), ST, PC(24)
+	R0, R1, R2, R3, R4, R5, R6, R7 (All 24 bit registers )
+	BF(24), RC(16), TL(24), TH(24), SP(16), TR(24/16), PM(24 / 9,15).	
+
+	Status Register:
+	
+	IEx 		(1)
+	PRL0, PRL1	(6, 6)
+	Negative	(1)
+	Overflow	(1)
+	Zero		(1)
+	Carry		(1)
+	U0, U1		(1, 1)
+	RZ		(1)
+	Overflow Mode	(1)
+	IE0, IE1	(1, 1)
+		
+	
+1. Data transfer instructions.
+
+     Register to register:
+	LD 	regD, regS 	: regD <- regS
+	LD	regD, Rij	: regD <- Rij,       Rij <- Rij(nop/+/-/++)
+	LD	Rij,  regS	: Rij  <- regS
+
+
+     Register/memory to memory/register:
+	(direct addressing)
+	LD	AH,   DRAM	: AH     <- (DRAM),  8 + 1 bits, non indexed
+	LD	DRAM, AH	: (DRAM) <- AH,      8 + 1 bits, non indexed
+	LD	DRAM, Rij	: (DRAM) <- Rij,     6 bit, Only RAM0 address
+	LD	Rij,  DRAM	: Rij    <- (DRAM),  6 bit, Only RAM0 address
+
+	(indirect addressing)
+	LD	regD,	 (Rij)	: regD   <-  (Rij),  Rij <- Rij(nop/+/-/++)
+	LD	regD,    (Rij)p	: regD   <-  (Rij)p, Rij <- Rij(nop/+/-/++)
+	LD	regD,    (regS)p: regD   <-  (Rij)p, Rij <- Rij(nop/+/-/++)
+
+	LD	(Rij),   regS 	: (Rij)  <-  regS,   Rij <- Rij(nop/+/-/++)
+	LD	(Rij)p,  regS 	: (Rij)p <-  regS,   Rij <- Rij(nop/+/-/++)
+	LD	(regD)p, regS 	: (Rij)p <-  regS,   Rij <- Rij(nop/+/-/++)
+
+     Memory to memory:
+	(indirect addressing)
+	MV(B)	(Rj),	(Ri)	: (Rij)  <-> (Rij),  Rij <- Rij(nop/+/-/++)
+	
+		
+     register/io to io/register:
+	INPD	regD,    IOADD	: regD   <- (IOADD), 4 bit IO address
+	OUTD	IOADD,   regS	: IOADD) <- regS,    4 bit IO address
+
+     Immediate:
+	LDI	regD, Imm <,sh> : regD   <- Imm. data (16 bit, shift SE, FL, FR)
+	LDLI	regD, LImm 	: regD   <- LImm. data (24 bit)
+	LDI	Rij,  Imm <,sh> : Rij    <- Imm. data (16 bit, shift SE, FL, FR)
+	LDLI	Rij,  LImm 	: Rij    <- LImm. data (24 bit)
+	LDSI	Rij,  SImm	: Rij	 <- SImm. data (9 bits, upper bits zero)
+	LDSI	AH,   SImm	: AH	 <- SImm. data (9 bits, sign extended)
+	LDSI	regD, VSImm	: regD	 <- VSImm      (4 bits)
+
+	LDI	(Rij),Imm <,sh>	: (Rij)  <- Imm. data (16 bit, shift SE, FL, FR)
+				  Rij    <- Rij(nop/+/-/++)
+	LDI	(Rij),LImm 	: (Rij)  <- LImm. data (24 bit),
+				  Rij    <- Rij(nop/+/-/++)
+	
+     Stack:
+	POP 	regD 		: SP     <- SP +1,   regD <- (SP)
+	PUSH	regS 		: (SP)   <- regS,    SP <- SP -1
+		
+2. ALU instructions:	
+
+    Addition:
+	ADSI	Rij, SImm	: Rij	<- Rij + SImm (9 bit, signed)
+
+	ADD	A, Reg, <s>, <c>: AH	<- AH + Reg<Right shift> + Carry
+				  	   There are 3 bits for right shift
+	ADD	A,(Rij),<s>, <c>: AH	<- AH + (Rij)<Right shift> + Carry
+				  Rij	<- Rij (nop/+/-/++)
+	ADD	AH, (Rij)p	: AH	<- + (Rij)p <Right shift> + Carry
+				  Rij   <- Rij (nop/+/-/++)
+	ADD	AH, (DRAM)	: AH	<- (DRAM) (9 bits 1 bit for RAM0 or 1)
+	ADD	AH, Rij		: AH	<- AH + Rij < Right Shift> + Carry
+				: Rij	<- Rij (nop/+/-/++)
+	
+		
+NOTE:
+
+BRANCH through LDI:
+
+	LDI PC, Imm (16 bit, shifted)
+	LDI PC, Imm (24 bit)
+CYCLE :
+	If the regD is PC then the instruction will take 1 CYCLE extra to
+adjust with the pipeline
+
+
+
+

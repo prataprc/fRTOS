@@ -1,0 +1,353 @@
+/* Low-level design document for message box. */
+Data structures.
+----------------
+struct mbx_list_node {
+	int mbx_id;  /* Massage box id. */
+	int mbx_name; /* Message box name. */
+	struct tcb *wtcbptr; /* Waiting task queue. */
+	struct msg_queue *msgqueue; /* Mailbox message queue. */
+	struct mbx_list_node *next; /* Poiner to next box in the list. */
+};
+
+struct msg_queue {
+	char *msg; /* Message buffer. */
+	int msg_len; /* Length of the message. */
+	struct msg_queue *next; /* Pointer to next message in the list. */
+};
+
+Design Note:
+------------
+/* 
+ * Both the message box list and message queue list are singly linked list.
+ * Another design alternative is to use doubly linked list, since in this
+ * message box design much of traversing through list is not required 
+ * second alternative is dropped.     
+ */
+
+Global variables.
+----------------
+static int mbx_count = 1; /* Unique count of message box id. */
+static struct mbx_list_node *mbx_list_head, *mbx_list_tail; /* Pointer to capture start and end of message box list. */
+
+#define KERNEL_MEMORY_POOL_ID 0 /* Memory pool id from which memory is allocated. */
+
+Functions.
+---------
+Name : create_message_box
+Description : Creates a message box
+I/P Parameters : 
+	int name : Name of the message box
+O/P Parameters :
+	int *mbx_id : ID of the created message box.
+RETURN :
+	E_NAME_EXIST : Name already exist.
+	E_NO_MEM     : Memory not available.
+	 0           : Success.	
+
+int create_message_box(int name, int *mbx_id)
+{
+
+	struct mbx_list_node *tmp_mbx_node;
+	/* Check whether name already exist in the list.If so return error. */	
+	if(name != NULLP && mbx_list_head != NULLP)
+	{
+		tmp_mbx_node = mbx_list_head;
+		enter_critical_section();
+		tmp_mbx_node =  findkey(tmp_mbx_node, name);
+		exit_critical_section();
+		 /* checked for zero , since zero means match is found. */
+		if(tmp_mbx_node != NULLP) 
+		RETURN(E_NAME_EXIST);
+	}
+	/* Allocate memory required for the new message box. */	
+	rc = mem_alloc(ID, &tmp_mbx_node, sizeof(mbx_list_node);
+	/* Check whether memory is allocated, if not return error. */	
+	if(rc == -1)
+		RETURN(E_NO_MEMORY);
+	
+	enter_critical_section();
+	/* Assign the values to newly created memory. */
+	tmp_mbx_node->mbx_name = name;
+	tmp_mbx_node->mbx_id = count++;
+	*mbx_id = tmp_mbx_node->mbx_id;
+	tmp_mbx_node->wtcbptr = NULLP;
+	tmp_mbx_node->msgqueue = NULLP;
+	tmp_mbx_node->next = NULLP;	
+
+	/* Add new message box to list. */
+	if(mbx_list_head == NULLP) {
+		mbx_list_head = tmp_mbx_node;
+		mbx_list_tail = mbx_list_head;		
+	}
+	else {
+		mbx_list_tail->next = tmp_mbx_node;
+		mbx_list_tail = tmp_mbx_node;
+	}
+	exit_critical_section();
+	return(0);
+}
+	
+Name : delete_message_box
+Description : Deletes a message box.
+I/P Parameters : 
+	int mbx_id : Message box ID
+O/P Parameters :
+	NONE
+Return:
+	E_INVALID_ID: Invalid message box ID
+		0   : Success
+	
+int delete_message_box(int mbx_id)
+{
+
+	struct mbx_list_node *tmp_mbx_node, *tmp_mbx_node1;
+	struct tcb *tmp_tcb_node;
+	struct msg_queue *tmp_msg_queue, *tmp_msg_queue1;
+
+	/* Using message box id get the message box from the list. */
+	if(mbx_list_head == NULLP)
+		RETURN(E_INVALID_ID);
+	else {
+		enter_critical_section();
+		tmp_mbx_node = mbx_list_head;
+		tmp_mbx_node = findkey(tmp_mbx_node, mbx_id);
+		exit_critical_section();
+		/*If no id matches the one in the list return invalid id. */
+		if(tmp_mbx_node == NULLP)
+		RETURN(E_INVALID_ID);	
+	}
+	enter_critical_section();
+	/* Wake the task in queue. */	
+	if(tmp_mbx_node->wtcbptr != NULLP)
+	{
+		do {
+			tmp_tcb_node = tmp_mbx_node->wtcbptr;
+			wakeup_task(tmp_tcb_node);
+			tmp_tcb_node = tmp_tcb_node->stateq_next;
+		   }while(tmp_tcb_node != NULLP);
+	}
+
+	/* Free all the message queue of this message box. */
+	if(tmp_mbx_node->msgqueue != NULLP)
+	{
+		tmp_msg_queue1 = tmp_mbx_node->msgqueue;
+		do {
+			tmp_msg_queue = tmp_msg_queue1->next;
+			free(tmp_msg_queue->msg);
+			free(tmp_msg_queue);
+			tmp_msg_queue1 = tmp_msg_queue;
+		}while(tmp_msg_queue1 == NULLP);
+	}	 
+	/* Remove the message box from the list. */		
+	tmp_mbx_node1 = mbx_list_head;
+	if(tmp_mbx_node1 == tmp_mbx_node) {
+		tmp_mbx_node1 = tmp_mbx_node->next;
+		mbx_list_head = tmp_mbx_node1;
+	}
+	else {
+		while(mbx_mbx_node1 != NULLP)
+		{
+			if(tmp_mbx_node1->next == tmp_mbx_node)
+			{
+				tmp_mbx_node1->next = tmp_mbx_node->next;
+				break;
+			}
+			tmp_mbx_node1 = tmp_mbx_node1->next;
+		}	
+	}
+	if(tmp_mbx_node->wtcbptr != NULLP) {
+		free(tmp_mbx_node);
+		exit_critical_section();
+		RETURN(E_MBX_DELETED);
+	}
+	free(tmp_mbx_node);
+	exit_critical_section();
+	return(0);
+}	
+	
+Name : mbx_name_to_id
+Description : Gets ID for a message box
+I/P Parameters :
+	int name : Name of the message box
+O/P Parameters :
+	int *mbx_id : ID of the message box
+Return:
+	E_INVALID_NAME : Invalid name specified 
+ 
+int mbx_name_to_id(int name, int *mbx_id)
+{
+	struct mem_table *tmp_mbx_node;	
+	/* Check name is valid. */
+	if(name == NULL)
+		RETURN(E_INVALID_NAME);
+	
+	/* Traverse list to find message box with given name. */
+	if(mbx_list_head == NULLP)
+		RETURN(E_INVALID_ID);
+	else {
+	enter_critical_section();
+	tmp_mbx_node = mbx_list_head;
+	tmp_mbx_node = findkey(tmp_mbx_node, name);
+	exit_critical_section();
+	} 
+	if(tmp_mbx_node == NULLP)
+		RETURN(E_INVALID_NAME);
+	else {
+		*mbx_id = tmp_mbx_node->mbx_id;
+		return(0);
+	}	
+}  		
+
+Name : mbx_findkey
+Description :Finds message box with passed key.
+I/P Parameters : 
+	workptr : Pointer to the top of the list
+	mbx_id  : ID of the message box
+O/P Parameters :
+	workptr : Pointer of message box that matches the key.
+Return:
+	scan_node_ptr : Returns address of the list containing mbx_id.
+	 
+struct mbx_list_node * mbx_findkey(struct mbx_list_node *workptr, int mbx_id)
+{
+	
+	struct mbx_list_node *scan_node_ptr = NULLP;
+
+		
+	while(workptr != NULLP) {
+		if(workptr->mbx_id == mbx_id) {
+			scan_node_ptr = workptr;
+			return(scan_node_ptr);
+		}
+		workptr = workptr->next;
+	}
+	return(scan_node_ptr);
+}
+	
+Name : send_message
+Description: Sends a message to a message box.
+I/P Parameters : 
+	mbx_id : ID of the message box
+	msg    : Address of the message
+	msg_len: Lenght of the message
+O/P Paramters :
+	NONE
+Return :
+	E_NO_MEM : No memory
+	E_INVALID_ID : Invalid message box id.	
+	    0        : Success
+
+int send_message(int mbx_id, void *msg, int msg_len)
+{
+	struct mbx_list_node *tmp_mbx_node;
+	struct msg_queue *tmp_msg_queue;
+	struct msg_queue *tmp_msg_queue1;
+
+	/*Traverse list to find message box with given name. */
+	if(mbx_list_head == NULLP)
+		RETURN(E_INVALID_ID);
+	else {
+		enter_critical_section();
+		tmp_mbx_node = mbx_list_head;
+		tmp_mbx_node =  findkey(tmp_mbx_node, mbx_id);	
+		exit_critical_section();
+		if(tmp_mbx_node == NULLP)
+			RETURN(E_INVALID_ID);
+	}
+
+	/* Allocate memory required for message queue. */
+	rc = mem_alloc(ID, &tmp_msg_queue1, sizeof(struct msg_queue));
+
+	/* Check whether memory is allocated, if not return error. */
+	if(rc == -1)
+		RETURN(E_NO_MEM);
+	
+	rc = mem_alloc(ID, &tmp_msg_queue1->msg, msg_len);
+	if(rc == -1)
+		RETURN(E_NO_MEM);
+	enter_critical_section();	
+	/* Copy message to message queue. */	
+	mem_copy(tmp_msg_queue1->msg, msg, msg_len);
+	/* Message length is captured. */
+	tmp_msg_queue1->msg_len = msg_len; 
+	tmp_msg_queue1->next = NULLP;
+	/* Add the new queue buffer to the list. */
+	if(tmp_mbx_node->msgqueue == NULLP)
+	tmp_mbx_node->msgqueue = tmp_msg_queue1;
+	else {
+		for(tmp_msg_queue = tmp_mbx_node->msgqueue;tmp_msg_queue->next != NULLP; tmp_msg_queue = tmp_msg_queue->next);
+		tmp_msg_queue->next = tmp_msg_queue1;
+	}
+
+	/* Wake the task from head of the list waiting in the wait queue. */
+	tcbptr = tmp_mbx_node->wtcbptr;
+	if(tcbptr != NULLP) {
+		wakeup_task(tcbptr);
+		tcbptr = tcbptr->stateqnext;
+		tcbptr->stateqprev = NULLP;
+	}
+	exit_critical_section();	
+	return(0);
+}
+
+Name : reeceive_message
+Description: Recieves a message from the message box.
+I/P Parameters :
+	mbx_id : ID of the message box
+O/P Parameters :
+	msg : Address of the buffer in which message is copied.
+	msg_len : Sixe of the message copied into buffer.
+Return :
+	E_INVALID_ID : Invlaid id of the message box.
+	   0         : Success
+	
+int receive_message(int mbx_id, void *msg, int *msg_len)
+{
+	struct mbx_list_node *tmp_mbx_node;	
+	struct tcb *tmp_tcb_node;
+	struct msg_queue *tmp_msg_queue;	
+
+	/* Traverse list and find message box with mbx id. */
+	if(mbx_list_head == NULLP)
+		RETURN(E_INVALID_ID);
+	else {
+		enter_critical_section();
+		tmp_mbx_node = mbx_list_head;
+		tmp_mbx_node = findkey(tmp_mbx_node, mbx_id);	
+		exit_critical_section();
+		if(tmp_mbx_node == NULLP)
+		RETURN(E_INVALID_ID);
+	}
+
+	/* Send message in the head of the queue. */
+	enter_critical_section();
+	tmp_msg_queue = tmp_mbx_node->msgqueue;
+	if(tmp_msg_queue != NULLP) {
+		mem_copy(msg, tmp_msg_queue->msg, tmp_msg_queue->msg_len);
+		/* Send lenght of message copied. */
+		*msg_len = tmp_msg_queue->msg_len;
+		/* Remove queue from the buffer list. */
+		tmp_mbx_node->msgqueue = tmp_msg_queue->next;	
+		/* Free buffer */	
+		free(tmp_msg_queue->msg);
+		free(tmp_msg_queue);
+	}
+	else {
+	/* No message is in the queue, task is put in the wait queue. */	
+	if(tmp_mbx_node->wtcbptr == NULLP)
+		tmp_mbx_node->wtcbptr = current_task;
+	else {
+		for(tmp_tcb_node = tmp_mbx_node->wtcbptr;tmp_tcb_node->next != NULLP; tmp_tcb_node = tmp_tcb_node->next);
+		tmp_cb_node->stateq_next = current_task;
+	}
+	exit_critical_section();
+	return(0);
+}
+	
+
+
+
+
+
+		
+			

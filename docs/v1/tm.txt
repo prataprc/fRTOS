@@ -1,0 +1,97 @@
+The following is a draft on the task management design.
+
+Global structure:
+-----------------
+
+struct TCB {
+        /* A task is, at any time on one of these queues: ready_queue, 
+	 * wait_queue 
+	 */
+        struct  TCB 	*stateq_prev;
+        struct  TCB 	*stateq_next;
+
+        /* task identity */
+        int     	task_id;
+
+        /* scheduler related */
+        int     	task_state;     /* One of NON_EXISTENT, READY, RUNNING,                                            WAITING              */
+        struct 	TCB 	*waitq_prev;    /* Identifies the wait queue */ 
+        struct  TCB	*waitq_next;       
+        int     	sleep_channel;  /* Channel on which the task is
+                                           currently sleeping   */
+        int     	task_pri;       /* Priority: lower numerical value =>
+                                           a higher priority    */
+	int 		raised_pri;	/* To avoid the priority inversion
+					   problem */
+
+        /* context related */
+        int     	stack_size;     /* user stack size in #bytes    */
+        char    	*stack_base;    /* user stack base address */
+        context 	saved_cxt;      /* for saving/restoring task context
+                                           during switches      */
+
+        /* filesystem related */
+        files_struct 	*files;        
+
+        /* event management */
+        struct  event_table *event_list;
+        int     	subsribed_events;       /* for the alternate design */
+        int     	event_pending;          /* for the alternate design */
+
+        /* miscellaneous */
+        /* ... */
+};
+
+struct task_queue {
+	struct TCB *tcbptr;
+	struct task_queue *tcbq;
+};
+
+struct  TCB     *current_task;  /* running task; For uK-FS internal use */
+struct	TCB	*ready_queue;	/* head of the ready queue. */
+struct  TCB	*wait_queue;	/* head of the suspend queue */
+	/* The tcbptr and tcbq field are made NULL */
+
+Scheduling policy:
+
+ The uKernel employs pre-emptive priority-based scheduling. The CPU is
+ allocated to the highest priority task as soon as all the other resources
+ required by it are available.
+ Tasks of the same priority are scheduled in FIFO order.
+
+ State transitions:
+
+   sleep() moves the calling task from running to wait state (and to the wait 
+ queue) wakeup() moves all tasks waiting on a channel to ready state (and to
+ the ready queue) 
+   receive_message() may move a task from running to wait state (and to the 
+ wait queue) send_message() may move a task from wait state to ready state (and
+ to the ready queue) 
+   down_semaphore() may move a task from running to wait state (and to the wait
+ queue) up_semaphore() may move a task from wait state to ready state (and to 
+ the ready queue) 
+ I/O request such as read()/readdir()/read_mbx()/write_mbx() may cause the 
+ calling task to be moved to a wait state.
+
+ At the end of each of these transitions, the scheduler is activated to pick up
+ the highest priority task from the ready queue and allocate the CPU to it, if
+ the current task is of a lower priority.
+
+ The scheduler is also run periodically (say once every 2 ms).
+
+
+Interfaces:
+-----------
+
+1. tm_spawn_task();
+2. tm_delete_task();
+3. tm_wait_to_ready();
+4. tm_ready_to_wait();
+5. tm_running_to_wait();
+6. tm_ready_to_run();
+7. tm_set_task_att();
+8. tm_get_task_att();
+
+1. tm_spawn_task(int task_id, int priority, int stack_size, (*entry_point)(),
+			int max_fds):
+

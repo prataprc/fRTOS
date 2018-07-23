@@ -1,0 +1,372 @@
+--------------------------------
+Exception Management: (for C68K)
+--------------------------------
+
+A short description on the various exceptions that are to be supported. For
+more on interfaces go further down.
+
+Reset:
+------
+    The entire firmare architecture is divided into boot code (which in turn
+takes different paths based on whether it is a S3, C5, test or hard reset)
+and the run-time code. If we choose to implement this as a state machine, then 
+we may have to allocate program and data memory for it. 
+    The reset handler will have to be hooked with this state machine.
+
+Bus Error, Address Error, Illegal instruction, privilege violation:
+-------------------------------------------------------------------
+    For production version this Exception means fatal ! For development
+version, we can use this exception to be hooked into the debugger code.
+
+Zero Divide:
+------------
+    Is there a possibility for a zero divide situation ? 
+
+Spurious interrupt:
+-------------------
+    For production version, do nothing and return back to the interrupted code.
+In the development version, the handler can be hooked into the debugger code ?
+
+Trace:
+------
+    This will have to be hooked into the debugger code. Note that, tracing will
+be disabled on entering a exception handling.
+
+Level1 - Level7 auto vectored interrupt:
+----------------------------------------
+    The ISR frame-work should provide mechanisms for developers to subscribe
+their handlers into this.
+
+TRAP [vector]:
+--------------
+    Potential use is to implement system calls (if we decide to run the
+applications and the kernel in a different address space).
+
+CHK, TRAP, TRAPV:
+-----------------
+    Any use of these instructions for our firmware ?
+     
+Un-initialised Exception:
+-------------------------
+    ???
+
+Design considerations and overview:
+-----------------------------------
+    Each interrupt vector consumes 4 bytes in the vector table and there are 
+256 interrupt vectors. If we have to populate all the vectors, then it could 
+consume 1KB of memory space. This can be a waste on the memory.
+
+    The exception handlers are divided into 2 halfs, to perform first level and
+second level (can be called as bottom halves) of exception handling. 16/32 
+second level handlers are allowed. These handlers can be initialised will 
+compile time or can be subscribed while run-time. The exception handlers will 
+be running in a seperate stack space.
+    
+    The first level exception handling allows interruption by higher priority
+exception (which introduces nesting of interrupts). The first level handler
+can activate any number of bottom halves. All the first level handler should
+place a call to return_from_isr() function when it wants to return back. There
+will also be a scheduler hook in return_from_isr().
+
+    Self-subscribing bottom half handlers are allowed. The interrupt mask level
+will be made "ZERO" during bottom half handling. The bottom half handlers
+are invoked in return_from_isr() function in a "loop", which means that the 
+exception handling returns back to the interrupted task, only when there are
+no more active bottom halves. Note that in the event of careless programming 
+this may lead to performance degradation or worse, infinite looping on bottom
+halve handling. As an alternative we can creat a seperate class of task called
+as isr_task to handle lenthier exception handling.
+
+    Profiling counters can be added for number of times an exception occurs,
+number of times the bottom halves are invoked, number of times
+the scheduler is invoked in the exception context.
+
+    The amount of the stack usage can be figured out by initialising the
+stack memory with 0xA5A5A5A5 and dumping back the same after a "long run"
+
+    The bottom half tables are to be statically created at compile time and
+subscribed during the initialisation time.
+
+Interface specification: 
+------------------------
+
+/* Basic datas */
+
+#define MAX_BHALF     32        /* Can be changed to 16 */
+
+struct bhalf {
+    void *param;                /* maximum data size */
+    void (*bh_hndler)(void *param);
+};
+
+static int32 excep_nesting;     /* incremented for every nested 
+                                 * exceptions */
+static int act_bhalf;           /* 32/16 bit active bottom halves */
+static struct bhalf bh_arr[MAX_BHALF];
+
+/* profile data */
+
+int32 exception_count[no_of_exceptions]; 
+int32 bhalf_count[MAX_BHALF];
+int32 scheduler_hook;
+
+/* functions */
+
+void return_from_isr(void);
+int16 save_irq(char8 mask_value);   /* takes in a new mask value 
+                                     * returns the current mask value */
+int16 restore_irq(char8 mask_value);/* takes in the previous mask value 
+                                     * returns the current mask value */
+int16 subscribe_irq(char8 irq, void (*handler)(void));
+int16 subscribe_bhalf(char8 bhalf, void (*handler)(void), void *param);
+
+
+----------------
+Task management:
+----------------
+    - The scope of task management are, scheduling tasks, aggregating all
+      the task related activities into a single table "struct tcb", to support
+      task blocking, migrating a task from waitq to readq and dispatching a
+      new task.
+    - The plan is to provide a static priority based round robin scheduling.
+      Round robin scheduling will be used on same priority tasks. Until the
+      task exhausts its time slice, the next task in the same priority will
+      not be considered for scheduling. But if a task gets blocked before its 
+      time slice expires, then the next task in the same priority level will be
+      considered for scheduling. If the time slice of a task expires, the time
+      slice will be reloaded and added to the end of the priority list (of same
+      priority).  If the task is woken up from block state, it will added to 
+      the begining of the priority list (of same priority).
+    - The scheduler will be directly invoked either from return_from_isr()
+      or when the running task gets blocked.
+    - The time slice of a given task can be dynamically changed.
+    - If a special class of task called isr_task is required in future, then the
+      design and implementation should easily be scalable to accomodate that 
+      requirement.
+    - Currently there will be no provision for dynamically creating a task.
+    - Interfaces will be provided to dynamically make a task non-preemptive.
+    - A seperate kernel stack is not provided, since kernel is going to be
+      available as a library.
+    - Acquisition of nested semaphore is strictly not allowed. This might lead
+      to unnecessary "ABBA" type dead lock situation.
+    - The tasks are statically created.
+    - The time stamp will be re-initialised, when ever time_tick overflow 
+      occurs.
+    - The no of priority levels can be 32 or 16.
+    - The no of events can be 32 or 16.
+      
+Interface:
+----------
+
+#define MAX_PRIORITY    32                  /* Can be changed to 16 */
+struct tcb {
+    char8 id;                               /* unique task id */
+    char8 state;                            /* TS_RUN, TS_READY, TS_WAIT */
+    struct tcb *stateq_next;                /* task is either in readq or 
+    struct tcb *stateq_next;                 * in the waitq */
+    struct tcb *waitq_next;                 /* linkage that can be used by
+    struct tcb *waitq_next;                  * other kernel primitives */
+    char8 priority;                         /* ranging from 1 - 31 (static) */
+    int16 time_slice;                       /* slice amount in ms */
+    int16 slice_count;                      /* slice count down */
+    int16 flag;                             /* NON-PREEMPTIVE, SEM_AQUIRED,
+                                             * SEM_WAITING, TIM_WAITING,
+                                             * EVENT_PENDING */
+    void *ustack;
+    int16 ssize;                            /* user stack size */
+    void *context;                          /* the place to hold the task 
+                                             * context */
+    struct semaphore *awsem;                /* the task is either waiting on 
+                                             * this semaphore or it has 
+                                             * acquired it (based on the flag)
+                                             */
+    struct timeout *timout;                 /* The task is blocked on this
+                                             * timeout */
+    int32 sem_tstamp;                       /* This will be updated with the 
+                                             * running time stamp when ever the
+                                             * task acquired a semaphore */
+    int32 subscribed_events;                
+    int32 pending_events;                   
+
+    /* Per task profiling */
+    int32 wswitch_count;                    /* no of times switched to waitq */
+    int32 rswitch_count;                    /* no of times switched to readq */
+    int32 semswitch_count;                  /* switched out while SEM_AQUIRED*/
+    int32 ready_count;                      /* time (ms) in TS_READY */
+    int32 run_count;                        /* time (ms) in TS_RUN */
+    int32 wait_count;                       /* time (ms) in TS_WAIT */
+    int32 state_tstamp;                     /* This will be updated with the
+                                             * running time stamp when ever
+                                             * the task enters a new state */
+    /* Per task profiling */
+}
+
+struct priority {
+    struct tcb *tcbp;                       /* this is based on the stateq list */
+    char no_of_task;                        /* of same priority */
+}
+
+struct tcb *curr_task;
+struct tcb *readyq;
+struct tcb *waitq;
+int active_priority;                        /* Indicative of tasks in the readyq */
+struct priority *pri_array[MAX_PRIORITY];   /* Indicative of tasks in the readyq */
+
+char8	tm_get_curr_tid(void);
+struct tcb*	tm_tid_to_tcbptr(int tid);
+int	tm_wait_to_ready(struct tcb * tcbptr);
+int	tm_running_to_wait(void);
+int	tm_schedule(void);
+int	tm_dispatch(void);
+int16 tm_set_slice(struct tcb *tcbptr);
+int16 tm_get_slice(struct tcb *tcbptr, char flag);
+int16 tm_task_sleep(int32 timeout);
+
+
+--------------
+Timer drivers:
+--------------
+    To implement the interfaces to manage the two hardware timers and a 
+watchdog timer.
+
+Timer managment:
+----------------
+    - Preferably a timer tick for every milli second.
+    - Subscribe timeout handlers from task or kernel code.  
+        ( If the timeout handler is from a task, then it needs to be decided
+          whether the handler can be invoked even when the task is in the 
+          readq or waitq ??? )
+    - Count down timer on tasks for waking up after a specified time. 
+      Implemented through a dedicated timeout handler.
+    - Count down timer to unblock a task from semaphore, if it exceeds a 
+      specified time. Implemented through a dedicated timeout handler.
+    - Count down timer to monitor whether a task has kept the semaphore
+      acquired beyond a stipulated time period.
+    - To support ONE_SHOT, CYCLIC timeouts.
+    - Support for self subscribing timeout handlers.
+    - Support to cancel a subscribed handler. And to wakeup a task even 
+      before the timer expires.
+    - Timeout list implemented as sorted differential counter.
+    - slice_count, sem_tstamp value in the tcb structure is influenced by the 
+      timer ticks. Apart from that the profile values ready_count, run_count,
+      wait_count, state_tstamp are influenced by the timer ticks.
+    - Profile tasks while running, readyq and blocked. Profile semaphores,
+      event response time (optional), 
+    
+Interfaces:
+-----------
+
+Note: The driver interfaces are not covererd here, since it is dependant on
+      the timer hardware modules.
+
+struct timeout {
+    int id;                     /* unique id per timeout */
+    int value;                  /* subscribed timout value */
+    int cdown;                  /* count down on subscribed value */
+    int flags;                  /* ONE_TIME / CYCLIC / BLOCKED / SEM_WAIT */
+    struct tcb *task;
+    void *param;                /* could be data or could be address */
+    void (*handler)(void *param);
+    struct timeout *next;
+    struct timeout *prev;
+}
+
+int timer_tick;                 /* time tick in milli second */
+int timer_tick_hi;              /* high resolution timer tick */
+static struct timeout *tim_list;
+static unsigned int remaining_ticks;    /* this is used to manage the list
+                                         * as sorted differential counter
+                                         */
+struct tcb *tcbp_wlist;          /* blocked list of tasks on timeout, the
+                                  * same list can be used to unblock a task
+                                  * from semaphore, after a stipulated time */
+
+int     get_mstime(void);        /* get milli second time */
+int     get_hrrime(void);        /* get high resolution time */
+int		timeout(struct tcb *tcbp, void (*handler)(int param), void *param,
+                int duration_in_msec, int flags);
+                                /* returns timeout_id /
+int		untimeout(int timeout_id);
+
+
+----------
+Semaphore:
+----------
+    - Same interfaces can be used for binary, counting and synchronisation
+      semaphores.
+    - Nested acquisition of semaphores are not allowed. This restriction is
+      provided to avoided "ABBA" dead-lock situation.
+    - Timeout facility is provided for the semaphore, which can be used to
+      release the task from block state once the timeout expires.
+    - The duration of taken semaphore is available as a return value from 
+      sem_give.
+    - Dynamic creation of semaphore is allowed.
+    - Only synchronisation semaphore can be used between task and isr. And the
+      isr should only do a sem_give.
+    - For binary semaphore, the init_count should be 1
+    - For counting semaphore, the init_count should be > 1.
+    - For synchronisation semaphore, the init_count should be 0.
+    - Except for the synchronisation semaphore the count value should not go 
+      negative.
+    - In all the semaphore types, the calling task will block if the count 
+      value is ZERO.
+      
+Interface:
+----------
+
+#define MAX_SEMAPHORES  20
+
+struct semaphore {
+    char8 sem_id;                       /* unique semaphore id */
+    char8 init_count;                   /* Initial count, while sem creat*/
+    char8 count;                        /* operating count */
+    struct tcb *wtcbp;                  /* waiting list of tasks on this
+                                         * semaphore */
+    struct tcp *holding_task;           /* the task which is holding the 
+                                         * semaphore */
+    struct semaphore *next;
+    struct semaphore *prev;
+};
+
+struct *sem_head;                       /* the semaphore list will be sorted 
+                                         * by sem_id field */
+char8 create_semaphore(char8 init_val, char8 sem_type);
+int sem_take(char8 sem_id, int32 timeout);
+int32 sem_give(char8 sem_id);           /* The return value will indicate 
+                                         * how long the semaphore was kept
+                                         * acquired in ms */
+int release_semaphore(char8 sem_id);
+
+
+-----------------
+Event interfaces:
+-----------------
+    - Only a task can subscribe or unsubscribe to an event.
+    - There are 32 events available per task.
+    - Each subscribed event will be assciated with an event id and event 
+      handler.
+    - On posting to an event, an optional parameter can be provied, which in 
+      turn will be passed to the event handler.
+    - The events will be dispatched, when ever an event is posted to a task,
+      and when ever the scheduler switches the task into the running state.
+    
+Interfaces:
+-----------
+
+#define MAX_EVENT   32          /* Can be changed to 16 */
+struct event {
+    int event_id;               
+    struct tcb *tcbp;
+    struct event *next;
+    struct event *prev;
+    void (*handler)(int);
+    void *param;
+} 
+
+struct event *event_list[MAX_EVENT];
+
+int subscribe_event(int event_id, void (*handler)(int));
+int unsubscribe_event(int event_id);
+int post_event(int tid, int event_id, int parameter);
+int dispatch_event(struct tcb *tcbp, int event_id);
+

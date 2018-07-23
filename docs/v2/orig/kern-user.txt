@@ -1,0 +1,459 @@
+
+                               $kernel users API$
+
+The kernel provides only the interfaces. All the data structures, variables, 
+memory which are maintained by the kernel are not directly accessible by the 
+applications.
+
+These functions (interfaces) can be called by applications or by ISRs or by 
+modules, or by all the three.
+
+*1.1*Timer interfaces:
+
+	int 		timer_init( void );
+	time_val 	get_time( void );
+	int		    timeout( handler, duration_in_msec, flags );
+	int		    untimeout( timout_id );
+
+NOTE:
+	The accuracy of the timer tick cannot be gauranteed if Repeat Blocks
+are executed often.
+
+void timer_init(void):
+
+	- This function should be called only during the intialisation time, 
+	  probably in the statup function.
+	- There are four registers that has to be set during the intialisation.
+		They are, tim_preset, wd_preset, tim_wd_command ,watchdog_preset.
+	- There is no corresponding uninitialize function.
+
+	- initialises global timer_ticks variable and schedule_count variable with
+	  scheduler suration
+
+
+struct time_val get_time(void):	(currently not implemented)
+	
+	- This function can be called by anyone.
+	- This function returns the time (since the power up)in AH (seconds)
+	  and in AL (milli seconds).
+	- Since, as of now we do not have any request from the application for 
+	  this function, it will not be implemented in the assembly.
+
+	- On success returns the time in seconds/milli seconds in AH and AL 
+	  registers. On error returns 0 in AH and AL and sets the corresponding
+          error values in the error fields.
+
+	- Doesnt change any global variables.
+
+
+
+int timeout(void(*handler)(), int duration_in_msec, char flags):
+	
+	- This function can be called by anyone.
+	- Parameters validation,
+		* duration_in_msec cannot less than or equal to 0 or more than MAX_TIMEOUT_DURATION
+		* The flags should be either CYCLIC_TIMO or BLOCK_TIMO or NULL.
+	- A call to this function will subscribe a timeout handler for the 
+	  specified time period.
+	- Types of timeouts.
+		CYCLIC_TIMO, when the flag points to value 1. Here, when the 
+		handler has subscribed for the timeout, it will be called once
+		for every "duration_in_msec" period.
+
+		BLOCK_TIMO, when the flag points to value 2. In this case the 
+		calling application (or task) will be blocked until the timout
+		occurs. Then the handler is automatically unsubsribed.
+
+		Normal timeout, when the flag points to NULL. In this case the
+		calling application will not be blocked and the timeout handler
+		will be called only once, after which it is automatically 
+		unsubscribed.
+	- For all the above types the timout handler will be unsubsribed, when
+	  the untimeout function is called (with the timer_id).
+	- For the BLOCK_TIMO, the timeout handler should not be unsubscribed.
+
+
+	- On success it return timeout_id, on failure it returns -1. The function returns
+	  -1 when,
+		* The duration_in_msec is <= NULL or when it is > 
+		  MAX_TIMEOUT_DURATION.
+		* If the flag option is neither of the three.
+		* When the handler is NULL
+		* When mem_alloc fails.
+		* When a non task function tries to subscribe for a BLOCK_TIMO
+
+	- Modifies the list of timeout tables pointed by the variable
+	  timeout_list.
+		
+
+int untimeout(int timeout_id):
+
+	- This function can be called by any one.
+	- It unsubscribes the timeout handler with id "timeout_id".
+
+	- On success this function returns 0, on failure it returns -1. The 
+	  function returns -1 when,
+		* When there is no subscribtion for the given timeout_id.
+
+	- Modifies the list of timeout tables pointed by the variable 
+	  timeout_list.
+	
+Task management:
+----------------
+
+	int	tm_get_curr_tid(void);
+	int	tm_tid_to_tcbptr(int tid);
+	int	tm_spawn_task(int pri, int ss, entry_point, int max_fds);
+	int	tm_wait_to_ready(struct TCB * tcbptr);
+	int	tm_running_to_wait(void);
+	int	tm_schedule(void);
+	int	tm_dispatch(void);
+
+
+int	tm_get_curr_tid(void):
+
+	- This function can be called only by the application.
+	- It returns the task id of the currently running task. In other words,
+	  if a task wants to know its 'task_id' then it call call this function.
+	
+	- On success it returns a non zero value which is a valid task_id.
+
+	- Doesnt change any global variable.
+
+
+struct TCB *	tid_to_tcbptr(int tid):
+
+	- This function can be called by any one.
+	- It returns a pointer to the TCB structure for the given task id (tid)
+
+	- On success a valid TCB pointer is returned, on failure it returns
+	  NULLP,
+		The reason for the failure may be due to,
+			* Invalid task id.
+
+	- Doesnt modify any global variable.
+
+
+int     tm_spawn_task(int pri, int ss, entry_point, int max_fds):
+
+	- This function can only be called during the startup.
+	- Parameter validation,
+		* pri (priority) value cannot exceed LOWEST_PRIORITY and 
+		  cannot be zero. The lower the value the higher the priority.
+		* ss (stack size) value cannot exceed MAX_STACK_SIZE and cannot
+		  be zero.
+		* entry_point cannot be NULLP. It should point to a valid
+		  program address.
+		* max_fds, gives the maximum no of files/directories that can 
+		  be opened simultaneously. It should not exceed MAX_FDS.
+	- When all the parameters to this functions are valid, then a TCB will
+	  created, initialised, and will be linked to the readyq.
+	- When the scheduler invokes this task, it will start from the
+	  entry_point.
+	- It is not possible to delete a task. So once the task is
+	  created it can be either in wait queue or in ready queue or in
+	  running state.
+	
+	- On success the function will return a valid tid. On failure it will
+	  return ZERO. The function may fail due to the following reasons,
+		* Invalid paramters.
+		* Memory allocation failure.
+
+	- This function modifies the readyq list.
+
+
+int     tm_wait_to_ready(struct TCB *tcbptr):
+
+	- This function cannot be called directly by the application. It is 
+	  exposed only to other kernel subsystem.
+	- This function removes the task from the waitq and adds it to the
+	  readyq.
+	- The caller should take care of updating the waitq_prev and waitq_next
+	  fields in the TCB table.
+
+	- On success it return ZERO, on failure it returns -1. The failure
+	  happens when,
+		* tcbptr is NULLP.
+		* When the task is not in wait state.
+	
+	- This function modifies the readyq and waitq variable. Apart from this
+	  it modifies the stateq_next, stateq_prev and task_state field in the
+	  TCB.
+
+
+int	tm_running_to_wait(void):
+
+	- This function cannot be called directly by the application. It is 
+	  exposed only to other kernel subsystem.
+	- It is assumed that this function is called on behalf of the current
+	  running task. So the current task is put into the wait queue and the
+	  scheduler is invoked. This function also saves the context of the
+	  calling application.
+
+	- This function does not return to the caller.
+
+	- This function modifies the readyq. Apart from this it modifies the 
+	  saved_cxt and task_state field in the TCB table.
+
+NOTE:
+	The application should not issue an indirect call to
+tm_running_to_wait() function inside a repeat block.
+
+
+int 	tm_schedule():
+
+	- This function is not exposed outside. It is called by two functions
+	  namely, tm_running_to_wait() and timer.
+	- If the scheduler is invoked by the function tm_running_to_wait(), 
+	  the scheduler checks readyq and picks up the highest prioriry task
+	  and issues a tm_diapatch() for the selected task. If the readyq
+	  is empty, the scheduler spins till a task is put into the readyq.
+	- If the scheduler is called by the timer, the scheduler saves the
+	  context of the interrupted application and checks the readyq for a 
+	  for a higher priority task (than the current_task). If the readyq
+	  is empty or if the readyq does not contain a higher priority task
+	  (than the current_task), then the scheduler restores the execution
+	  of the interrupted task.
+ 	- This function does not return to the caller. 
+		
+NOTE:
+	In short, the scheduler uses static priority based scheduling.	
+
+int	tm_dispatch():
+
+	- This funtion is not exposed outside. It is called only by the 
+	  function tm_schedule().
+	- It restores the excution of the desired task.
+
+
+Event interfaces:
+-----------------
+
+	int     subscribe_to_event(int event_id, void (*handler)(int));
+	int     post_event(int tid, int event_id, int parameter);
+	int     dispatch_event(struct TCB *tcbptr);
+
+How use this facility:
+
+	The application can subscribe a function for the desired event, which
+	is denoted by event_id. Event posting is done on task basis and during
+	the event posting the user must provide the event_id along with the 
+	taskid. 
+
+int 	subscribe_to_event(int event_id, void (*handler)(int)):
+
+	- This function can be called only by the application.
+	- Parameter validation,
+		* event_id value cannot be more than MAX_EVENT_ID and cannot 
+		  be equal to zero.
+		* handler cannot be NULLP.
+	- It subscribes the event to the event list of the current task.
+
+	- On success the function returns zero, else it returns -1. A failure
+	  can happen when,
+		* The parameters are not valid.
+		* Memory allocation failure.
+		* Subscribing for an already existing event.
+
+	- This function modifies the event list of the current task.
+
+
+int	post_event(int tid, int event_id, int paramter):
+
+	- This function can be called by anyone.
+	- Parameter Validation.
+		* tid must point to a valid task.
+		* event_id must have a subscribtion in the task 'tid'
+	- This function posts the event (along with the parameter) and returns 
+	  back. The event handler will be called by the scheduler, when the 
+	  task gets the chance to run.
+
+	- On success it returns zero, otherwise it returns -1. A failure occurs
+	  when,
+		* The event_id does not have a subscribtion.
+		* The given task id is invalid.
+
+	- Modifies the event table of the corresponding event_id/tid.
+
+
+int     dispatch_event(struct TCB *tcbptr):
+
+	- This function can be called only by the scheduler. It will be called 
+	  for the task which will be scheduled next.
+
+
+Semaphore:
+----------
+	
+	int create_semaphore(int name, int init_val, char sem_type)
+	int sem_name_to_id(int name)
+	int down_semaphore(int sem_id)
+	int up_semphore(int sem_id)
+	int pend_semaphore(int sem_id)
+	int post_semaphore(int sem_id)
+
+
+How to use semaphores:
+
+	The semaphores are used to sycronise between the tasks and to avoid the
+race conditions between multiple task while accessing the same resource.
+
+	There are two types of semaphores that are suppoted here.
+		* binary semaphore 
+		* pending semaphore.
+
+	The binary semaphore allows only one task to access the given resource.
+When a task is using a resource, all the other tasks which are requesting for 
+the semaphore are put into the wait queue.
+	The pending semaphore is similar to the sleep and wake up mechanism.
+A task can pend on a semaphore, which will be then woken up by a call to
+post_semaphore() with the corresponding sem_id. The semaphore posting can be
+done by another task or by ISRs.
+semaphore are 
+
+int 	create_semaphore(int name, int init_val, char sem_type):
+
+	- Can be called by the startup code or by the application.
+	- Creates a semaphore with given init_val and name(if given) and
+  	  assigns a unique ID for each semaphore and updates sem_id. 
+	- Caller can use this sem_id for further operation with this semaphore.
+ 	- Name can be given a valid name or it can be null. 
+	- init_val is the initial value of the semaphore, for binary semaphore 
+	  it is 1. 
+	- ID is returned .
+  	- sem_type is the type of the semaphore. 
+	- We have two types of semaphore one is D type(corresponding to 0) which is a binary 
+	  semaphore used to avoid shared resource conflict and it can be used 
+	  by apllication and all other subsystem. 
+	  Another type is R type (corresponding to 1) which is only used by the application, this is
+	  used to preserve the wakeup and its init_val is zero.
+	- Caller has to specify the type of semaphore either 0 or 1 according to the usage.
+	- On success return sem_id on failure returns -1. The failure can happen when,
+		* When the semaphore already exists for the given name.
+		* Memory allocation fails.
+		* Invalid initial count.
+	
+	- Global variables are not modified.
+
+
+
+int sem_name_to_id(int name)
+
+	- Gets the name of the semaphore and gives back the semahore id for the
+	  corresponding name as a return value.
+	
+	- On success returns sem_id else -1. A failure may occur when,
+		* The given name is invalid.
+
+
+int down_semaphore(int sem_id)
+
+	- Down semaphore can be used only for D type of semaphore.
+	- sem_id is the ID of semaphore on which the requested down operation
+	  has to be performed.
+  	- If no other task is using this semaphore then the count is 
+	  decremented by 1 and the calling task takes the semaphore; otherwise 
+	  task is put in the semaphore waiting queue. 
+
+	- On success this function returns sem_val(current value of semaphore), else it returns -1. A failure 
+	  can occur when,
+		* The semaphore id is invalid.
+
+	- Global variables are not modified
+
+
+int up_semphore(int sem_id)
+
+	- Up semaphore can be used only for D type of semaphore. 
+	- When the application wants to release the resource, it has to call
+	  this function, so that other tasks can use the resource.
+
+	- On success it return sem_val, else it returns failure. A failure can occur
+	  when,
+		* The current semaphore value exceeds the intial value.
+		* sem_id is invalid.
+
+	- Global variables are not modifies.
+
+
+int pend_semaphore(int sem_id)
+
+	- Pend semaphore can be used only for R type of semaphore.
+	- The calling task gets blocked until a posting is done in the 
+	  semaphore.
+	- Only one task can use this semaphore. 
+	
+	- On success it returns sem_val, else it returns -1. A failure can occur when,
+		* The semaphore id is invalid.
+		* some other task is waiting on the given semaphore (Sem_id)
+
+	- Global variables are not modified.
+
+
+int post_semaphore(int sem_id)
+
+	- Post semaphore can be used only for D type of semaphore. 
+	- This function should be called by ISRs or other tasks to wakeup the
+	  the blocked task.
+	- When the post_semaphore() call occurs before the pend_semaphore()
+	  (i.e when the posting is done for a semaphore on which there is no
+	  tasks waiting) then the wakeup call will be stored. In which case,
+	  a subsequent pend_sempahore() from the task will return immediately,
+	  without blocking.
+
+	- On success it returns sem_val. on failure it returns -1. A failure may
+	  happen when,
+		* The given semaphore id is invalid.	
+
+
+Memory Management interfaces:
+----------------------------
+
+
+	int* mem_alloc(int mem_pool_id, int size_in_words)
+	int mem_free(int mem_pool_id,int *start_address)
+	
+
+*) int* mem_alloc (int mem_pool_id, int size_in_words):
+
+	- This function can be called by anyone
+	- On success  it returns the starting address of the allocated 	  block(word aligned )
+	- On failure ,it returns 0
+	- The convention followed is that mem_pool_ids 0 to 10 are 	reserved for RAM0 and pool Ids 11 to 20 are for RAM1
+
+	- returns failure on :
+	  *Invalid mem_pool id
+	  *Insufficient memory availabe in the pool 
+	
+
+	usage.
+
+   	...
+  	...
+	int    *buff_addr;
+	buff_addr =  mem_alloc(my_pool_id, 255)
+	
+	if ( buff_addr!= 0) {
+        strncpy(buff_addr, full_path_name, 255);
+        buff_addr[254] = NULL;
+	   }
+   	...
+	...
+
+NOTE: The returned address word is word-aligned.
+
+*) int mem_free(int mem_pool_id,int *start_address)
+	
+	- This function can be called by anyone
+	- Releases the block specified by start_address from the 	  specified  memory pool
+	- On success  it returns 0 and on failure ,it returns -1
+
+	-returns failure on 
+	
+	  *invalid pool id 
+	  *invalid start adress -not been allocated 
+
+
+
+/*** End of file ***/
+/* vim: set filetype=notes : */ ~

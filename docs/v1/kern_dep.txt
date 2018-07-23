@@ -1,0 +1,173 @@
+The following doc contains the concerned part of each module for the 
+over all system integration and execution.
+--------------------------------------------------------------------
+
+Hanging thread:
+---------------
+
+	* Currently splx(3) is used everywhere. Once the interrupt priority 
+	  is finalised, the splx call should be modified to set to correct 
+	  processor level.
+	* Once the memory pools are finalised, currect pool id should be used
+	  for the mem_alloc() calls.
+
+Timer Management:
+-----------------
+
+Macros:
+
+TIMER_PRESET 		= 0x101d0
+TIMER_COMMAND		= 0x000000
+SCHEDULE_DURATION	= 2
+
+/* pending */
+WATCHDOG_PRESET		= 0x123456
+WATCHDOG_RESTART
+TIMER_INIT_VAL
+MAX_TIMEOUT_DURATION	/* for duration_in_msec */
+
+Global variables exported:
+
+int time_to_reschedule;			/* Initialised to Zero */
+
+Interfaces:
+
+	1. int timer_init(void)
+	2. int timeout(handler, duration_in_msec, flags)
+	3. int utimeout(timeout_id)
+
+Global variables referenced here:
+
+struct TCB	*current_task;	
+struct TCB	*readyq;
+struct TCB	*waitq;
+int		KCP;
+
+Memory Allocation:
+
+	1. For every successful timeout() call, memory is allocated for
+		* timeout_table	(8 words)
+
+Memory deallocation:
+
+	1. For every successful untimeout() call, memory is deallocated for
+		* timeout_table (8 words)
+
+
+Task Management:
+----------------
+
+Macros:
+
+MAX_TASK_ID		= 10
+LOWEST_PRIORITY		= 10
+MAX_FDS			= 10
+MAX_STACK_SIZE		= 1000
+
+Global variables exported:
+
+struct TCB 	*current_task;		/* Initialized to zero */
+struct TCB	*readyq;		/* Initialized to zero */
+struct TCB	*waitq;			/* Initialized to zero */
+
+Interfaces:
+
+	1. int     tm_get_curr_tid(void);
+        2. int     tm_tid_to_tcbptr(int tid);
+        3. int     tm_spawn_task(int pri, int ss, entry_point, int max_fds);
+        4. int     tm_wait_to_ready(struct TCB * tcbptr);
+        5. int     tm_running_to_wait(void);
+        6. int     tm_schedule(void);
+        7. int     tm_dispatch(void);
+
+Global variables referenced:
+
+	No external global variables are referenced.
+
+Memory Allocations:
+
+	1. For every successful tm_spawn_task, memory is allocated for
+		* Task Control Block 	(15 words).
+		* Stack			(range 300-500 words).
+		* file_struct		(4 words).
+		* fd array in 		(variable).
+		* Saved context		(23 words).
+
+Memory Deallocation:
+
+	No memory deallocation.
+
+
+Event Management:
+-----------------
+
+Macros:
+
+MAX_EVENT_ID		= 100
+
+Global variables exported:
+
+	There is an event list maintained in the TCB of every task.
+
+Interfaces:
+
+	1. int     subscribe_to_event(int event_id, void (*handler)(int));
+	3. int     post_event(int tid, int event_id, int parameter);
+	4. int     dispatch_event(struct TCB *tcbptr);
+
+
+Global variables referenced:
+
+struct TCB *	current_task->event_list.
+
+
+Memory Allocations:
+
+	1. For every successful subscribe_to_event(), memory is allocated for
+		* event_table structure (5 words).
+
+Memory Deallocation:
+
+	Since there is not unsubscribtion facility provided, memowry will not
+	be deallocated.
+
+Message Box:
+------------
+
+Macros:
+
+MAX_MBX_ID		= 10
+
+Global variables exported:
+
+	There are no global variables that are exported. There is a message box
+	list which is local to this module.
+
+Interfaces:
+
+	1. int create_message_box(int name, int *mbx_id)
+        2. int mbx_name_to_id(int name, int *mbx_id)
+        3. int send_message(int mbx_id, void *msg, int msg_len)
+        4. int receive_message(int mbx_id, void *msg, int *msg_len)
+
+Global variables referenced:
+
+struct TCB	*current_task;
+
+Memory Allocations:
+
+        1. For every successful create_message_box(), memory is allocated for
+                * mbx_list_node structure (5 words).
+	2. For every successful send_message(), memory is allocated for
+		* message queue (3 words)
+		* a message buffer of size msg_len (which is given as the
+		  parameter).
+
+Memory Deallocation:
+	
+	1. For every successful receive_message_box(), memmory is deallocated
+	   for,
+		* message queue (3 words)
+		* a message buffer of size msg_len (which will be present in the
+		  message queue table).
+

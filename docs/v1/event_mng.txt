@@ -1,0 +1,95 @@
+The following is the design draft for the event management.
+-----------------------------------------------------------
+
+ Event handling is done on task basis (i.e) event handlers (which are subcribed
+ by the tasks) will be invoked only when some body posts an event to that
+ particular task.
+ 
+ There is a level of abstration between the event posting and the event
+ handling.
+
+ The event handlers will be invoked by the scheduler. Event handlers will be
+ invoked only for the next scheduled task
+
+Global structure:
+-----------------
+
+	struct event_table {
+		void 	(*event_hdlr)(int);
+		int 	paramter;
+		int 	event_id;
+		int 	pending;
+		struct event_table *next;
+	}
+
+The following fields are added to the TCB structure.
+
+struct TCB::struct	event_table *event_list;
+
+Interfaces:
+-----------
+
+1. int	subscribe_to_event(int event_id, void (*handler)(int)):
+
+  Input:
+	event_id  - The number which will be used to post an event.
+	handler   - The function which will be called during event dispatching.
+
+  Output:
+	error.
+
+  Description:
+	
+	- This function could be called only by the application
+	- For every subscription to an event an instance of event_table will be
+	  created and linked to the event_list of the current task's TCB.
+	- The parameter field, pending field and the next field will be 
+	  initiazed to zero.
+
+	
+2. int	unsubscribe_to_event(int event_id):
+
+  Input:
+	event_id - The event number.
+
+  Output:
+	error.
+
+  Description:
+	
+	- The event id is used to indentify the event in the event_list and 
+	  removed.
+
+
+3. int	post_event(int tid, int event_id, int parameter):
+
+  Input:
+	tid	  - The task to which the event has to be posted.
+	event_id  - The event number.
+	parameter - The parameter that should be passed to the event handler,.
+		    when it is invoked.
+
+  Output:
+	error.
+
+  Description:
+
+	- This function is used to post an event to the desired task.
+	- The parameter is copied to the parameter field structure of the 
+	  event_table and the pending flag set.
+
+4. int dispatch_event(struct TCB *tcbptr):
+
+  Input:
+	tcbptr - To identify the task whose events has to be dispatch.
+			
+  Output:
+	error.
+
+  Description:
+	
+	- This function will called only by tm_scheduler.
+	- All the pending events for a task are dispatched by calling the 
+	  respective event handlers.
+
+

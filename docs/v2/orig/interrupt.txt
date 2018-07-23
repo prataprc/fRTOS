@@ -1,0 +1,130 @@
+Method 1:
+---------
+
+/*      1. Nesting of interrupt is allowed
+ *      2. Delayed interrupt handling (2nd level) through bottom half
+ *      3. Scheduler is handled in the bottom half. But it is called only 
+ *         after all the other bottom halves have finished
+ *      4. It is assumed that all the first level ISRs uses the same set of 
+ *         registers (of example all the fl ISRs uses only Ri and AH, AL, X, Y)
+ */
+
+int     KCP = 0;                /* Kernel Control Path */
+int     time_to_reschedule;     /* This will be set by the timer ISR when 
+                                   schedule window expires */   
+
+entry-point for any ISR.
+        - All the other interrupts are disabled.
+        - The return address is pushed into the current stack.
+{
+	Push the status register
+        KCP++;          /* This will be decremented in the function 
+                                   ret_from_interrupt() */
+
+        if (KCP > 1) {          /* If it is a nested interrupt */
+                PUSH all the related registers into the kernel stack 
+        } else {
+                PUSH all the registers in the user stack.
+                Save the Stack Pointer to a GP register 
+                Switch to kernel stack, SP->kernel stack 
+                PUSH the user SP (from the GP register) into the kernel stack 
+        }
+        Interrupts can be enable after this point
+        Resolve the Interrupt and CALL the first level ISR 
+        
+        Jump to ret_from_interrupt 
+
+}
+
+return_from_interrupt
+{
+
+        Interrupts are disabled 
+        if (KCP > 1) {          /* Nested interrupt */
+                POP all the related registers /*That leaves only the ra and st*/
+                KCP--;
+		Pop the Status register
+		Enable the interrupts
+                return;         /* Return to the interrupted ISR */
+        } else {
+                
+                Enable all the interrupts
+                Handle the bottom halves
+                /* The latest element in the kernel stack is user SP and the 
+                   user stack contains the entire context*/
+                if (time_to_reschedule) {
+                        Switch to the user stack.
+                        /* It should be made sure that the PUSHed elements into
+                           the stack should be in order required by the 
+                           scheduler
+                         */
+                        Jump to tm_schedule()
+                        /* Execution will not return here, so KCP should be 
+                           decremented in the function tm_schedule() */
+                } else {
+			Diasable all the interrupts
+                        Switch to user stack 
+                        POP all the registers.
+                        Make sure that the latest element in the user stack is
+                                the return address to the application and st.
+                        KCP--;
+			Pop the status registers
+			Enable the interrupts
+                        return;         /* return to the application */
+                }
+        }
+}
+
+NOTE:
+        In the above method can also be implemented without having a kernel
+stack.
+        
+                        
+Method 2:
+---------
+
+/*      1. Nesting of interrupt is not allowed 
+ *      2. No delayed handling of the second level routine
+ *      3. Scheduler is invoked by the timer interrupt after a stipulated time.
+ */
+        
+entry-point for any ISR.
+        - All the other interrupts are disabled.
+        - The return address is pushed into the current stack.
+{
+	Push the status register.
+        Push the related registers.
+	Resolve the interrupt and call the first level handler.
+        If required call the second level handler (based on some condition 
+                checks).
+        
+        Pop all the related registers
+        
+	Pop the status register
+        Enable the interrupts.
+        return 
+}       
+
+A small (but not a serious) pitfall:
+        
+        Say, an ISR other than the timer has been trigger. 
+        The ISR will proceed to completion without enabling the other 
+interrupts. Just before it returns to the interrupted application/ISRs, if a 
+timer interrupt comes and invokes the scheduler then the current task might
+go to wait state. Once again when this task is reschedule at a later time the
+execution will start from the ISR's return instruction. 
+        
+
+
+Handling the scheduling:
+
+        The timer interrupt is the one which is going to call the scheduler 
+(tm_scheduler()).
+
+Before jumping to the tm_schedule function the timer ISR should do the 
+following
+
+        - Diable all the interrupts.
+        - Set the time_to_reschedule to 1.
+        - Make sure that the context of the interrupted application is pushed
+          into the stack along with the return address.

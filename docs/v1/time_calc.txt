@@ -1,0 +1,85 @@
+Here we assusme the following 
+	- DSP is running at 30 MHz.
+        - each instruction consumes one cycle in one instruction.
+
+All the following timing calculations are for worst case scenario.
+
+1. The calculation of the CD Input speed:
+
+1.1 The CD Speed:
+	At 1x The CD is suppose to give a typical data o/p of 
+	150 KBps.
+		75 sectors in one second.
+	Minimum - 50 sectors/sec (assump.)
+	Maximum - 100 sectors/sec(assump.)	
+
+	So 1 SECTOR RECIVED FOR EVERY 10 ms (at maximum throughput).
+
+1.2 Audio In Mail Box:
+	An interrupt is generated when the FIFO has 8*24 bits of data.
+	So for 1 sector there are 98 frames (each of 24 bytes).
+	For every 10ms the ISR shall be called at 100 times.
+
+	So we have an interrput for every 100 us.
+	or the ISR is called 10000 times in one second.
+	So we can execute 3000 instructions in that gap.
+	
+
+2. Audio-Out Mail Box:
+	On the DAC side the FIFO is read at 88.2 KHz and 21 words are read 
+	at a time. 
+
+	So to empty the FIFO it takes 230 us.
+	or the ISR is called 4200 times in one second.	
+
+	So we can execute 6900 instructions in that gap.
+
+	
+3. Timer interrupt:
+	We shall make the timer interrupt 1000 times in one second.
+	So we have 1000 us between two interrupts.
+
+	So we can execute 30000 instructions in that gap.	
+
+4. C3 Mail Box:
+	We shall assume that the MP3 Application in DSP2 takes a maximum 
+	of 30 sectors in 1 second (60 KBytes/second).
+
+	So the ISR will be called 1280 times per second.
+		(30 * 2048) / (16 * 3)
+	An interrupt will be generated for the DSP2 immediately after the 
+	C3 mailbox is filled. If the ISR on the DSP2 takes 200 cycles to empty 
+	the C3 mailbox, the DSP1 will interrupted after 200 cycles.
+
+	So the interrupt accors in burst.
+	And we have app. 3 to 4 uS between two interrupts.
+	And we will have 42 interrupts like that in burst.
+
+5. SRC Mail Box:
+	The ISR shall be called about 2800 times / second
+		(88200 * 3) / (32 * 3) 
+
+	See 4.
+
+6. uC Mail Box:
+	This ISR will be relatively very few times.
+	So the time taken by this ISR is negligible.
+
+NOTE:
+	Make sure that there is not big contention between interrupts.
+
+IMPORTANT: 
+	These calculations are only theoretical. We should check them
+in the actual board.
+
+So if we take some 150 instructions for each ISRs then
+the following is the MIPS calculation for for each of them.
+
+AIN-Mail Box  : 10000 * 150 = 1500000 = 1.5  MIPS.
+AOUT-Mail Box :  4200 * 150 =  630000 = 0.6  MIPS.
+Timer	      :  1000 * 150 =  150000 = 0.15 MIPS.
+C3 Mail Box   :  2200 * 150 =  330000 = 0.33 MIPS.
+SRC Mail Box  :  2800 * 150 =  420000 = 0.42 MIPS.
+
+Total Time = 3 MIPS.
+

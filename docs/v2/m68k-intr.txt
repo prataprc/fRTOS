@@ -1,0 +1,18 @@
+Exception Processing:
+    * normal / halt / exception
+    * HALT - bus error within bus error exception
+    * STOP, RESET, modify the SR, move to USP, move from USP.
+    * U to S mode - Only through exception. S to U mode - RTE, MOVE to SR, 
+      ANDI to SR, EORI to SR
+    * source of exceptions - external (reset, bus error, interrupts)
+      internal (instructions (TRAP, TRAPV, CHK, DIV), address errors, tracing)
+    * All exception vectors are 2 words (4 bytes) except RESET, which is 4 words
+    * RESET in supervisor program space. Others in supervisor data space.
+    * vector numbers are generated externally or internally. for interrupts 
+      a peripheral provides the vector number during the interrupt acknowledge 
+      cycle.
+
+RESET                       Ext.
+BUS ERROR (access fault)    Ext.
+ADDRESS ERROR               Ext.
+

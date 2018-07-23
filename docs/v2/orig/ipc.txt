@@ -1,0 +1,359 @@
+# -----------------------------------------------------------------------------------------
+# Inter task communication interfaces - V2 (03/Feb/2002)
+
+I. Data communication
+
+1. Message boxes
+
+ These can be used when the information to be conveyed is big and if the sender and receiver are
+ synchronised for communication. Data is copied between the task and the kernel spaces for this
+ communication. However, when the sending and receiving tasks are with in the same address
+ space (flat, non-virtual memory), they can exchange a memory reference to the message block
+ instead of the entire message. The sender can free the message after making sure that the receiver
+ has received it by some other means (say by looking for an acknowledgement event/message from the
+ receiver).
+
+ An example usage:
+
+ struct App_to_Player_msg {
+	int	type;	/* to differentiate the messages exchanged between the two tasks */
+	int	len;	/* length of the message in the body */
+	char	body[1]; /* message body */
+ };
+
+ void player_app_task(void)
+ {
+	char	play_msg_buf1[300];
+	char	*play_msg_buf2 = NULL;
+
+	App_to_Player_msg *msg;
+
+	int	rc = 0; /* functions' return code */
+
+	/* ... */
+	/* ... */
+
+	msg = (App_to_Player_msg *)play_msg_buf1;
+	msg->type = PLAY_A_SONG;
+	msg->len = play_list[i].pathname_len;
+	memcpy(msg->body, play_list[i].pathname, msg->len);
+
+	/* slow send due to buffer copy */
+	rc = send_message(player_mbxid, msg, sizeof(msg->type) + sizeof(msg->len) + msg->len);
+
+	/* perform error checks on 'rc' */
+
+	/* ... */
+	/* ... */
+
+	/* react to a play-directory event from uC, by sending a message to the player task */
+
+	/* create space for the directory name and type, len fields of the message */
+	play_msg_buf2 = (char *) mem_alloc(dir_path_len * sizeof(char) + 2 * sizeof(int));
+
+	msg = (App_to_Player_msg *)play_msg_buf2;
+
+	msg->type = PLAY_A_DIRECTORY;
+	msg->len = play_list[i].pathname_len;
+	memcpy(msg->body, play_list[i].pathname, msg->len);
+
+	/*
+	 * quick send due to sending a memory reference;
+	 * note that sizeof(msg) is just the size of a pointer!
+	 */
+
+	rc = send_message(player_mbxid, &msg, sizeof(msg));
+
+	/* perform error checks on 'rc' */
+
+	/* ... */
+	/* ... */
+
+ }
+
+ Ofcourse, for the above memory reference scheme to work, the sender and the receiver should have
+ an understanding that it would be done that way. They can further establish a convention between
+ themselves that first byte/word of the message would hold a keyword such as MSG_COPY or MSG_MEMREF
+ to indicate the way in which way it is to be interpreted. This is just an example to indicate that
+ the application tasks can use this message passing facility in a varied number of ways.
+
+1.2 Message box interfaces
+
+ int	create_message_box(int name, int *mbx_id);
+ int	send_message(int mbx_id, void *msg, int msg_len);
+ int	receive_message(int mbx_id, void *msg, int *msg_len);
+ int	delete_message_box(int mbx_id);
+ int	mbx_name_to_id(int name, int *mbx_id);
+
+ All functions return 0 on success and -1 on failure. Error class/codes are set appropriately.
+
+ create_...() ignores the 'name' argument when set to zero. Upon success, the function set *mbx_id
+ to a system wide unique value as an identifier for the message box just created.
+
+ send_message() sends 'msg_len' bytes of data from the buffer 'msg' to the message box identified
+ by 'mbx_id'.
+
+ receive_message() copies a message the message box identified by 'mbx_id' into the buffer 'msg'
+ and sets *msg_len to the length of copied message. If the message box contains no messages, this
+ call blocks. 
+
+ Apart from deleting the message box, delete_...() drops all unread messages contained in it.
+ All tasks blocked due to receive's on this message box are woken up with an invalid-id error.
+
+ mbx_name_to_id() is intended to keep applications free of hard coded 'mbx_id's.
+
+ Error class:
+ - MBX_ERR
+ Error codes:
+ - E_NO_MEM (no memory in uK to create a message box / send a message)
+ - E_ID_INV (the mbx_id supplied to send_...()/receive_...()/delete_...() is invalid)
+ - E_NM_INV (the name supplied to name_to_id() is invalid)
+
+
+2. Events
+
+ Events facilitate asynchronous communication. A task subscribes to one or more events by supplying
+ event handlers to each of those events. The uK invokes these handlers in its own context, When the
+ corresponding events occur (due to event posting by other tasks/ISRs or due to certain system
+ events). Events can be viewed as software interrupts with the handlers being the service routines.
+ Since the handlers are invoked in the context of the kernel, care should be taken so as not to
+ affect the real time performance of the system. Ideally, an event handler should perform very
+ simple tasks such as waking up a task, putting a task to sleep, posting a message to a task,
+ incrementing a semaphore or setting some control bits.
+
+ An example usage:
+
+ void player_app_task(void)
+ {
+	extern	int gui_event_name;
+	int	gui_event_id;
+	int	rc = 0;
+
+	/* ... */ 
+	/* ... */
+
+	if (event_name_to_id(gui_event_name, &gui_event_id) == 0) {
+		rc = subscribe_to_event(gui_event_id, gui_event_handler);
+		/* perform error checks on 'rc' */
+
+		/* ... */ 
+	}
+
+	/* ... */
+	/* ... */ 
+
+	/* message processing loop */
+	while (!done) {
+		/*  receive next message */
+
+		if ((rc = receive_message(player_app_mbxid, msgbuf, &msglen)) == 0) {
+			/* extract the message and process it */
+		} else {
+			/* perform error handling/recovery */
+		}
+	}
+
+	/* ... */
+	/* ... */ 
+		
+ }
+
+ void	gui_event_handler(int gui_event_vector)
+ {
+	int	rc = 0;
+
+	switch (gui_event_vector) {
+		case ADD_SONG_TO_PLAYLIST:
+			/* get song path name details etc from an appropriate place */
+			/* ... */
+
+			/* now send a message to the player application task */
+			msg->access = MSG_MEMREF;
+			rc = send_message(player_app_mbxid, &msg, sizeof(&msg));
+
+			/* perform error checks on 'rc' */
+
+			break;
+		case ADD_DIR_TO_PLAYLIST:
+			/* ... */
+			/* ... */
+
+			break;
+
+		/* other cases */
+
+		/* ... */
+		/* ... */
+
+		deafult:
+			break;
+	}
+
+	return;
+ }
+
+
+2.2 Event interfaces
+
+ int	create_event(int name, int *event_id);
+ int	subscribe_to_event(int event_id, void (*handler)(int vector));
+ int	post_event(int event_id, int event_vector);
+ int	delete_event(int event_id);
+ int	event_name_to_id(int name, int *event_id);
+
+ All functions return 0 on success and -1 on failure. Error class/codes are set appropriately.
+
+ when a task/ISR (or the uK itself) posts an event along with a vector, the uK calls the
+ corresponding handler(s) as soon as possible with the vector as the argument. A vectored
+ implementation allows an application to subscribe a single handler to all events it is
+ interested in and take different actions for different vectors.
+
+ None of these calls block.
+
+ A handler must be designed so as not to cause any race conditions, while accessing the subscriber's
+ address space.
+
+ Error class:
+ - EVT_ERR
+ Error codes:
+ - E_NO_MEM (no memory in uK to create an event)
+ - E_ID_INV (the event_id supplied to subscribe_...()/post_...()/delete_...() is invalid)
+ - E_NM_INV (the name supplied to name_to_id() is invalid)
+
+
+II. Task synchronisation
+
+ Synchronisation is a specialised form of communication where the quantumn of data exchanged is
+ insignficant as compared to the implicit control information exchange.
+
+1. Semaphores
+
+ The simplest and the most useful form of synchronisation is a semaphore. This uKernel supports
+ the generic counting semaphore (which can also be used for mutual exclusion in critical regions).
+
+ A counting semaphore can be seen as an integer which can be incremented and decremented without
+ any race conditions (i.e., operations on a semaphores are assured to be atomic). Counting
+ semaphores, as implemented in this uKernel, can never take a negative value. An attempt to
+ decrement the semaphore beyond zero will cause the caller to block. A semaphore cannot count
+ beyond the maximum value of an unsigned integer.
+
+ An example usage:
+ 
+ void	player_task(void)
+ {
+	extern int c3_semaphore_name;
+	int	c3_sem_id = sem_name_to_id(c3_semaphore_name);
+
+	int	rc = 0;
+
+	/* ... */
+	/* ... */
+
+	read(fd, ping_buffer, RAW_SECTOR_SIZE);
+
+	/* ... */
+	/* ... */
+
+	/*
+	 * C3 decoder is not re-entrant;
+	 * So the decoding has to be in a mutually exclusive critical region;
+	 */
+	down_semaphore(c3_sem_id, NULL);
+
+	/* decode the raw sector data buffer in place */
+	c3_decode(pong_buffer);
+
+	up_semaphore(c3_sem_id, NULL);
+	/* end of the critical section for C3 decoding */
+
+	/* ... */
+	/* ... */
+ }
+
+ /* get_sector(), an FS-internals routine, returns the C3 decoded data of a given sector number */
+ char	*get_sector(int sector_no)
+ {
+	extern int c3_semaphore_name;
+	int	c3_sem_id = sem_name_to_id(c3_semaphore_name);
+
+	/* ... */
+
+	sector_data_buf = get_raw_sector(sector_no);
+	/*
+	 * C3 decoder is not re-entrant;
+	 * So the decoding has to be in a mutually exclusive critical region;
+	 */
+	down_semaphore(c3_sem_id, NULL);
+
+	/* decode the raw sector data buffer in place */
+	c3_decode(sector_data_buf);
+
+	up_semaphore(c3_sem_id, NULL);
+	/* end of the critical section for C3 decoding */
+
+	return sector_data_buf;
+ }
+
+1.2 Semaphore interfaces
+
+ int	create_semaphore(int name, int init_val, int *sem_id);
+ int	up_semaphore(int sem_id, int *sem_val);
+ int	down_semaphore(int sem_id, int *sem_val);
+ int	delete_semaphore(int sem_id);
+ int	sem_name_to_id(int name, int *sem_id);
+
+ All functions return 0 on success and -1 on failure. Error class/codes are set appropriately.
+
+ 'sem_val' can be set to NULL by the caller if not interested in the counter value.
+
+ The semaphore is set to 'init_val' at creation. The up/down primitives set *sem_val to the
+ semaphore counter value (after the operation has been performed) upon return.
+
+ when a semaphore is deleted, all tasks blocked while attempting to down it are woken up with an
+ invalid-id error.
+
+ Error class:
+ - SEM_ERR
+ Error codes:
+ - E_NO_MEM (no memory in uK to create a semaphore)
+ - E_UP_LIM (the upper limit for the semaphore counter has already been reached)
+ - E_ID_INV (the semaphore id supplied to up_...()/down_...()/delete_...() is invalid)
+ - E_NM_INV (the name supplied to name_to_id() is invalid)
+
+
+2. Explicit synchronisation
+
+ This section deals with kernel facilities which can be used for explicit synchronisation between
+ tasks (unlike the implicit synchronisation achieved by semaphores and message passing).
+
+ task_suspend() can be used by any task to suspend any other task, provided the priority of the
+ suspending task is at least as high as the task to be suspended. ISRs have no such restrictions
+ though. task_resume() can be used by any task to resume the execution of any suspended task.
+
+ sleep() can be used by any task to sleep on a channel. A wakeup() on that channel wakes up any
+ sleeping tasks.
+
+ Note:
+ task_suspend()/task_sleep() do not support any time durations because such an effect can always be
+ achieved with a timeout()+semaphore combination.
+
+2.2 Interfaces
+
+ int	task_suspend(int task_id);
+ int	task_resume(int task_id);
+ int	sleep(int channel);
+ int	wakeup(int channel);
+
+ All functions return 0 on success and -1 on failure. Error class/codes are set appropriately.
+
+ A task can use a task_id value of -1 to suspend itself.
+
+ Error class:
+ - SYNC_ERR
+ Error codes:
+ - E_ID_INV	(the task id supplied to suspend()/resume() is invalid)
+ - E_NONE_SUSPENDED (the task id supplied to suspend() does not refer to a task that is suspended)
+ - E_NONE_ASLEEP (no task is asleep on the channel for which a wakeup() was issued)
+
+# End of document
+# ----------------------------------------------------------------------------------------

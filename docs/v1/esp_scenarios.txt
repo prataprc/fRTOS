@@ -1,0 +1,59 @@
+Various Scenarios in treating the ESP buffer.
+--------------------------------------------
+
+1. Assuming that the ESP buffer is in the RAM0 of DSP1 and managed by the 
+   DSP1:
+	Current understanding is that the data will be received through
+   the Audio-In Mail Box where the start and the end of the sector will be
+   signalled through the ACQ_S0 line. The ISR will manage the ESP buffer.
+	If it is decided that data should be sent through some other mechanism 
+   other than the Audio-In Mail Box (say the ESP buffer is accessible by both 
+   uC and the DSP1), then following questions occurs
+		1. who is going to manage the ESP buffer and its associated
+		   data fields ?
+		2. How the start and the end of the sectors is communicated to 
+		   the DSP?
+
+	The latency between the detection of the shock (data corruption)
+   and the passing that information to the DSP1 should be known.
+
+  Advantages:
+	* It seems to be easy for the ISR to detect the start and stop of the
+           sector through the ACQ_S0 line.
+
+  Disadvantages:
+	* The DSP1 will not know the occurence of shock immediately, due to the
+  communication latency between the uC and DSP. So the DSP1 cannot start 
+  processing the sector immediately. 
+
+2. Assuming that the ESP buffer is outside the MP3 system and managed by the 
+   Micro-Controller:
+	
+   Advantages:
+	* These is no latency between detecting the shock and
+	  communicating it to the ESP managment service.
+	* All the ESP related message passing between the uC and the DSP can
+	  be removed.
+
+   Disadvantage:
+	* Requires double processing. That is the start and the end of the 
+	  sector should be processed in the uC and also in the DSP.
+	* Supposing the sectors for a song are scattered then there is no point
+	  in buffering the contigious sectors in the ESP buffer (which is all 
+	  the uC can do unless otherwise it intelligent enough to perform 
+	  the scatter-gather operation).
+	  Even when the sectors are not scattered, random accessing to various
+	  sectors will be required if we support directory browsing along
+	  with heearing song.
+	 
+3. A third scenario is to buffer the data in the DSP2:
+	The third scenario makes sense only when it is affordable to allocate
+   few Kilo Bytes of memory to buffer the input data in DSP2.
+	In this case all the correct sectors recieved from the uC can be pumped
+   into the DSP2 RAM. So that even when the DSP1 is not able to receive sectors
+   due to shock, the DSP2 will find enough data in its RAM to decode and play
+   the song with out any interruption. Once the shock subsides and correct 
+   sectors are received by DSP1 and the DSP2 input buffer can be filled back.
+	The data from the uC is validated by the DSP1.
+   	
+

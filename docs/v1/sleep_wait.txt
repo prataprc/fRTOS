@@ -1,0 +1,130 @@
+The following is a draft on how to implement the sleep and wakeup mechanism
+in the micro-kernel. 
+------------------------------------------------------------------------------
+
+Introduction:
+-------------
+
+	Sleep and wakeup mechanism is provided by the kernel for the purpose 
+of synchronisation between different tasks. The task can sleep on a channel by
+calling the sleep function. The sleeping task will be wokenup by another 
+task or by some kernel routine. The channel is nothing but a number/ID/address
+which is unique across the system.
+
+Method one:
+-----------
+Global structures:
+------------------
+
+	struct 	sleep_channel {
+		struct tcb *wtcbptr;
+		int	   channel;
+		struct sleep_channel *next;
+	}
+
+  Fields: 
+
+  Description:
+	For every channel a new sleep_channel structure is created. And all the
+  tasks which waits on the channel is linked to the corresponding list.
+
+Global variables:
+-----------------
+
+struct sleep_channel *sleep_chain;
+
+Interfaces:
+-----------
+
+1. void sleep(int channel):
+
+  Input: 
+	channel	- This could be a number/Value/ID/address which is unique across
+		  the system.
+
+  Output:
+	none
+
+  Description:
+
+	- Sleep should be called only by a task.
+	- The task which calls this function will be put into the sleep_channel
+	  list of the corresponding channel and it will be switched to WAIT 
+	  state.
+	- The sleeping task will be woken up only when somebody calls the 
+	  wakeup() function.
+
+
+2. void wakeup(int channel):
+
+  Input:
+	channel	- This could be a number/Value/ID/address which is unique across
+		  the system.
+	  
+  Output:
+	none
+
+  Description:
+	- The wakeup function can be called by any one (kernel or task or ISR).
+	- All the task which are waiting on the channel will be put into the 
+	  READY queue and will be removed from the sleep_chain.
+	- If there is no task waiting on the given channel, then no action will
+	  be taken.
+	
+
+PITFALLS:
+
+	- The wakeup() event will not be registered or recorded.
+
+
+Method two:
+-----------
+Global variables:
+-----------------
+1.	int MAX_NO_OF_CHANNELS;
+2.	structure tcb *sleep_chain[MAX_NO_CHANNELS];
+
+Interfaces:
+-----------
+
+1. void sleep(int channel):
+
+  Input: 
+	channel	- This could be a number ranging from 0-MAX_NO_OF_CHANNELS.
+		  
+
+  Output:
+	none
+
+  Description: 
+
+	- Sleep should be called only by a task.
+	- The task which calls this function will be put into the sleep_chain
+	  of the corresponding channel and it will be switched to WAIT state.
+	- The sleeping task will be woken up only when somebody calls the 
+	  wakeup() function.
+
+
+2. void wakeup(int channel):
+
+  Input:
+	channel	- This could be a number ranging from 0-MAX_NO_OF_CHANNELS.
+	  
+  Output:
+	none
+
+  Description:
+
+	- The wakeup function can be called by any one (kernel or task or ISR).
+	- All the task which are waiting on the channel will be put into the 
+	  READY queue and will be removed from the sleep_chain.
+	- If there is no task waiting on the given channel, then no action will
+	  be taken.
+	
+
+PITFALLS:
+
+	- The wakeup() event will not be registered or recorded.
+	- If the channel number is out of range (0-MAX_NO_OF_CHANNELS), then the
+	  task sleeps infinitely.
+

@@ -1,0 +1,144 @@
+The following is a small write up on what and how to characterize in an RTOS. 
+CMX is taken as an example.
+
+The measurements can be interms of cycles or in terms of instructions.
+
+Interrupt management:
+
+1. From the time the interrupt is acknowledged, how long does it take to
+   execute the first instruction of ISR handler ?
+
+   Note that the routine registered in the vector table may not be the
+   actual ISR handler. So, do the measurements accordingly.
+
+2. Once the ISR handler is finished with its job, how long does it take to 
+   return back to the interrupted application task ?
+
+3. If there are bottom halves that would be invoked at the return of the 
+   ISR, then what is the time taken,
+
+   a. to finish the bottom half handling, when there are no pending bottom
+      halves.
+
+   b. to handle the nth registered bottom half. If the time taken is not
+      absolute, then try to indicate the time taken as a measure of n.
+
+4. If the ISR can make calls to RTOS apis, what is the time taken to complete
+   each of those calls made in the ISR context ? Also try to indicate if the 
+   time taken can be impacted by the parameters that are passed to the api.
+
+5. If the scheduler is invoked before returning to the application, what is 
+   the time taken,
+  
+   a. when there are no other eligible task to be scheduled.
+   
+   b. when there are eligible tasks to be scheduled but none of them is more
+      eligible than the current task. Also indicate the parameters that could
+      affect the time taken.
+
+Scheduler:
+
+Note: 
+    The typical entry points to the scheduler are, ISR return hook, calling the
+    RTOS api that blocks, task voluteerily yielding.
+
+1. Time taken by the scheduler to identify the most eligible task
+
+2. Time taken by the scheduler to save the context of the current task if it 
+   needs to be switched out.
+
+3. Time taken by the scheduler to dispatch the identified task for running.
+
+4. If there are other activities that the scheduler does, apart from 
+   scheduling tasks, then list the time taken to perform the other activities.
+
+5. Time taken to identify that there are no more eligible task (idle state).
+
+6. When the scheduler is in idle state, and a new task is made eligible to run,
+   what is the time taken by the scheduler to identify that task as the next
+   task to be scheduled ?
+
+
+Task managment:
+
+1. What is the time taken to move the active task into the wait queue ?
+
+2. What is the time taken to move the given task out of the wait queue ?
+
+3. What is the time taken to move the given task into the ready/resume queue ?
+
+4. What is the time taken to move the given task out of the ready/resume 
+   queue ?
+
+5. Time taken to create a task and the parameters that would affect this time.
+
+6. Time taken to delete a task and the parameters that would affect this time.
+
+7. Time taken to start task, if it is not automatically started during the
+   creation process.
+
+8. Time taken to volunteerily yield.
+
+9. Time taken to make the task non-preemptible.
+
+If timeout facility is provided when waiting on resources, then
+
+10. Time taken to subscribe to the timeout list for waiting.
+
+11. Time taken to wakeup in the event of timeout expiry
+
+12. Time taken to unsubscribe from the timeout list, because the task is woken
+    up even before the timeout expired.
+
+
+Timer Managment:
+
+1. Time taken to subscribe for a timeout.
+
+2. Time taken to start the timeout, if it is not started at the subscribe time
+
+3. Time taken to stop the timeout.
+
+4. Time taken to reset the timeout.
+
+5. Time taken to unsubscribe from the timeout list.
+
+6. Time taken to handle the timeout, in the event of timeout expiry.
+
+
+Semaphore managment:
+
+1. Time taken to create the semaphore.
+
+2. Time taken to acquire an available semaphore.
+
+3. Time taken to try acquiring an unavailable semaphore and not waiting on it.
+
+4. Time taken to try acquiring an unavailable semaphore and waiting on it.
+
+5. Time taken to posting a semaphore.
+
+
+Event management:
+
+1. Time taken to wait on an event and returning back immediately.
+
+2. Time taken to wait on an event and getting blocked.
+
+3. Time taken to signal events to
+ 
+   a. a specific task
+ 
+   b. highest priority task
+
+   c. highest priority task that is waiting for that event
+
+   d. all tasks
+
+   e. all tasks waiting on the even
+
+   f. all tasks with specified priority
+
+   g. all tasks with specified priority and waiting on the event.
+
+4. Time taken to reset the posted events for a task.

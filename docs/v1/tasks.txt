@@ -1,0 +1,826 @@
+struct context {
+        int     R0;
+        int     R1;
+        int     R2;
+        int     R3;
+        int     R4;
+        int     R5;
+        int     R6;
+        int     R7;
+        int     EXT0;
+        int     EXT1;
+        int     EXT2;
+        int     EXT3;
+        int     EXT4;
+        int     EXT5;
+        int     EXT6;
+        int     EXT7;
+        int     AH;
+        int     AL;
+        int     X;
+        int     Y;
+        int     PL;
+        int     PH;
+        int     ST;
+};
+
+struct TCB {
+        /* A task is, at any time on one of these queues: ready_queue,
+         * wait_queue
+         */
+        struct  TCB     *stateq_prev;
+        struct  TCB     *stateq_next;
+
+        /* task identity */
+        int             task_id;
+
+        /* scheduler related */
+        int             task_state;     /* One of TS_NON_EXISTENT, TS_READY,
+                                           TS_RUNNING, TS_WAITING */
+        struct  TCB     *waitq_prev;    /* Identifies the wait queue for a
+        struct  TCB     *waitq_next;       particular resource */
+        int             sleep_channel;  /* Channel on which the task is
+                                           currently sleeping   */
+        int             task_pri;       /* Priority: lower numerical value =>
+                                           a higher priority    */
+        int             raised_pri;     /* To avoid the priority inversion
+                                           problem */
+        int             flags;
+                        /* bit 0 - IS_RAISED (Priority inheritance)
+                           bit 1 - NON_PREEMPTIVE (The task will not be
+                                                        preempted */
+
+        /* context related */
+        int             stack_size;     /* user stack size in #bytes    */
+        char            *stack_base;    /* user stack base address */
+        struct context  *saved_cxt;      /* for saving/restoring task context
+                                           during switches      */
+
+        /* filesystem related */
+        files_struct    *files;
+
+        /* event management */
+        struct  event_table *event_list;
+};
+
+ 
+struct  TCB     *current_task = NULL; 	/* running task; For uK-FS internal 
+					   use */
+
+/* A given task can either be in ready or wait queue */
+struct	TCB	*readyq = NULL;		/* head of the ready queue. */
+struct  TCB	*waitq = NULL;		/* head of the suspend queue */
+
+int	task_count = 0;
+
+/* inerface functions - declarations*/
+struct TCB*	tm_tid_to_tcbptr(int tid);
+int	tm_get_curr_tid(void);
+int	tm_spawn_task(int pri, int ss, void (*entry_point)(), int max_fds, 
+					int *rc);
+int	tm_delete_task(struct TCB *tcbptr);
+int	tm_wait_to_ready(struct TCB *tcbptr);
+int	tm_ready_to_wait(struct TCB *tcbptr);
+int	tm_running_to_wait();
+int	tm_schedule();
+int	tm_dispatch();
+
+/* external libraries/subsystem interfaces  used */
+
+/* Memory management interfaces */
+extern int 	mem_init(char *address, int size, char value);
+extern void * 	mem_alloc(int size);
+extern void * 	kmem_alloc(int size);
+extern void	mem_free(void *);
+extern void	kmem_free(void *);
+/* Interrupt management interfaces */
+extern int	spl(int new_pl);
+extern void	spx(old_pl);
+
+/* subfunctions - declarations*/
+
+static struct TCB * get_tcb_stateq(int tid, struct TCB *tbcptr);
+static struct TCB * get_tcb_waitq(int tid, struct TCB *tbcptr);
+static int	unlink_from_stateq(strcut TCB *tcbptr);
+static int	unlink_from_waitq(strcut TCB *tcbptr);
+static int	add_to_stateq(struct TCB *tcbptr, struct TCB *tcb_list);
+static int	add_to_waitq(struct TCB *tcbptr, struct TCB *tcb_list);
+
+/* Interface functions - definitions */
+
+/*
+ * FUNCTION NAME:
+ *              int     tm_get_curr_tid(void);
+ *
+ * PARAMETER    :
+ *		None
+ *
+ * RETURN       :
+ *		int tid
+ *			0 	- failure
+ *			> 0 	- success
+ *
+ * GLOBAL PARAMETERS ACCESSED:
+ *              struct TCB *current_task (RONLY)
+ *
+ * NOTE :
+ *	This function can be called only by applications
+ */
+
+int tm_get_curr_tid(void)
+{
+	int opl;
+
+	if (curr_task) {
+		return current_task->taskid;
+	}
+	return 0;					/* ERROR */
+}
+
+/*
+ * FUNCTION NAME:
+ *		struct TCB*	tm_tid_to_tcbptr(int tid);
+ *
+ * PARAMETER	: 
+ *		int tid		- task id
+ *
+ * RETURN	: 
+ *		struct TCB *
+ *			NULL		- failure
+ *			otherwise success
+ * 
+ * GLOBAL PARAMETERS ACCESSED:
+ *		struct TCB *readyq (RONLY), *waitq (RONLY), *current_task(RONLY)
+ *
+ * NOTE :
+ *	
+ *
+ */
+
+struct TCB * tm_tid_to_tcbptr(int tid)
+{
+	struct TCB *temp_tcbptr;
+	int	opl;
+
+	opl = spl(3);	
+	if (readyq) {
+		temp_tcbptr = get_tcb_stateq(tid, readq);
+		if (temp_tcbptr != NULL) {
+			return temp_tcbptr;
+		}
+	}
+	if (waitq) {
+		temp_tcbptr = get_tcb_stateq(tid, waitq);
+		if (temp_tcbptr != NULL) {
+			return temp_tcbptr;
+		}
+	}
+	if (current_task) {	
+		if (current_task->task_id == tid) {
+			return current_task;
+		}
+	}
+	spx(opl);
+	return NULL;					/* ERROR */
+}
+
+		
+/*
+ * FUNCTION NAME:
+ *		int	tm_spawn_task(int pri, int ss, void (*entry_point)(), 
+ *						int max_fds);
+ *
+ * PARAMETER    :
+ *              int pri		- priority
+ *              int ss		- stack size
+ *		entry_point	- entry point to the task
+ *		max_fds		- maximum number of file descriptor that can be
+ *				  opened
+ *
+ * RETURN       :
+ *		int tid
+ *			0 	- failure
+ *			> 0	- success (tid)
+ *			
+ *
+ * GLOBAL PARAMETERS ACCESSED:
+ *              struct TCB *readyq (RW)
+ *
+ * NOTE:
+ *	- Only application can call this function. 
+ *	- The caller should take care of the error handling.
+ *	
+ *	- The tasks can be deleted only by calling an explicit tm_delete_task()
+ *	- It is assumed that all the tasks will run infinitely.
+ */
+ 	
+int	tm_spawn_task(int pri, int ss, void (*entry_point)(), int max_fds)
+{
+	struct TCB *new_tcb;
+	int	opl;
+		
+	
+	/* Allocate memory for the task to be created */
+	new_tcb = kmem_alloc(sizeof(struct TCB));	
+	if (new_tcb) {
+		return 0;					/* ERROR */
+	}
+	mem_init(new_tcb, sizeof(struct TCB), 0);
+
+	/* Allocate memory for stack */
+	new_tcb->stack_base = mem_alloc(ss);
+	sf (new_tcb->stack_base) {
+		return 0;					/* ERROR */
+	}
+	
+	/* Allocate memory for files. 
+	 */
+	new_tcb->files = kmem_alloc(sizeof(struct file_struct));
+	if (new_tcb->files) {
+		return 0;					/* ERROR */
+	}
+	/* Allocate memory for the fd field */
+	new_tcb->files->fd = kmem_alloc(sizeof(3*max_fds);
+	if (new_tcb->files->fd) {
+		return 0;					/* ERROR */
+	}
+	/* Initialise the fd array to NULL */
+	mem_init(new_tcb->files->fd, 3*max_fds, 0);
+
+	/* Allocate memory for the save context */
+	new_tcb->saved_cxt = kmem_alloc(sizeof(struct context));
+	if (new_tcb->saved_cxt) {
+		return 0;					/* ERROR */
+	}
+
+	new_task->task_id = ++task_count;
+	new_task->task_pri = pri;
+	new_task->stack_size = ss;
+	new_task->task_state = TS_READY;
+	
+	/* initialise the task's context to zero, except the SP, ST (status reg)
+	 */
+	/* copy the stack base pointer to the SP store it in the context */
+	/* push the entry point into the stack */
+	/* Also assign appropriate value to the status register and store it in 
+	   the context */
+
+	opl = spl(3);
+	if (readyq) {
+		add_to_stateq(new_task, readyq);
+	} else {
+		readyq = new_task;
+	}
+	spx(opl);		
+
+	return task_count;
+}
+		
+#ifdef DELETE_TASK_ALLOWED
+
+/*
+ * FUNCTION NAME:
+ *              int	tm_delete_task(struct TCB *tcbptr);
+ *
+ * PARAMETER    :
+ *		tcbptr		- pointer to the task that has to be deleted
+ *
+ * RETURN       :
+ *              int rc	
+ *                      0	- failure 
+ *                      otherwise success 
+ *
+ * GLOBAL PARAMETERS ACCESSED:
+ *              This function indirectly modifies the ready list or wait list
+ *
+ * NOTE :
+ * 	This inteface is optional.
+ *	If this interface has to be provided, then TCB has to be modified 
+ *	accordingly
+ */
+	
+int tm_delete_task(struct TCB *tcbptr) 
+{
+	struct TCB * prev_task;
+	struct TCB * next_task;
+	int opl;
+
+	if (tcbptr == NULL) {
+		return 0;					/* ERROR */
+	}
+
+	kmem_free(saved_cxt);
+	kmem_free(files);	/* PROBLEM : must free the allocated fields
+				   inside the file_struct */
+	mem_free(stack_base);
+
+	opl = spl(3);
+	while (tcbptr->event_list) {
+		/* This is slightly out of convention because event_list pointer
+		   is used after being freed. */
+		mem_free(tcbptr->event_list);	 
+		tcbptr->event_list = tcbptr->event_list->next.
+	}
+
+	unlink_from_stateq(tcbptr);
+	
+	/* If the task holds semaphores then wakeup one of the waiting task 
+	   here, because down() will not be called. The code will be added
+	   once the down() function is implemented.
+
+	   Also free the sem_list.
+	*/
+
+	/* The task is not deleted if the task is in the wait list. Instead the
+	   task it is put into the non existent state. And will be deleted by
+	   the the tm_wakeup(), wakeup() function 
+ 	 */
+	if (tcbptr->task_state == TS_WAIT) {
+		tcbptr->task_state = TS_NON_EXISTENT;
+	} else {
+		kmem_free(tcbptr);
+	}
+	
+	spx(opl);
+
+	return 1;
+}
+
+#endif /* DELETE_TASK_ALLOWED */
+	
+/*
+ * FUNCTION NAME:
+ *              int     tm_wait_to_ready(struct TCB *tcbptr);
+ *
+ * PARAMETER    :
+ *              tcbptr          - pointer to the task that has to be put into
+ * 			 	  the ready queue.
+ *
+ * RETURN       :
+ *              int rc
+ *                      0       - failure
+ *                      1	- task not in wait state
+ *			2 	- success
+ *
+ * GLOBAL PARAMETERS ACCESSED:
+ *		strcut TCB *readyq (RW), *waitq (RW)
+ *
+ * NOTE :
+ *	- This function can be called by an application or by a kernel routine
+ * 	- This function only adjusts the stateq_* fields in the TCB structure. 
+ *	- It is assumed that the waitq_* fields will be adjusted before calling
+ *	  this function.
+ */
+
+int tm_wait_to_ready(struct TCB *tcbptr)
+{
+	int 	rc;
+	int 	opl;
+
+	if (tcbptr == NULL) {
+		return 0;					/* ERROR */
+	}
+
+	opl = spl(3);
+	if (tcbptr->task_state != TS_WAIT) {
+		return 1;
+	}
+	/* unlink it from the waitq list */
+	rc = unlink_from_stateq(tcbptr);
+	if (rc == 0) {
+		spx(opl);
+		return 0;					/* ERROR */
+	} else if (rc == 1) {
+		waitq = NULL;
+		add_to_stateq(tcbptr, readyq);
+	} else if (rc == 2)
+		add_to_stateq(tcbptr, readyq);
+	}
+	
+	tcbptr->task_state = TS_READY;
+	spx(opl);
+	return 2;
+}
+
+/*
+ * FUNCTION NAME:
+ *              int     tm_ready_to_wait(struct TCB *tcbptr);
+ *
+ * PARAMETER    :
+ *              tcbptr          - pointer to the task that has to be put into
+ *                                the wait queue.
+ *
+ * RETURN       :
+ *              int rc
+ *                      0       - failure
+ *                      1       - task not in ready state
+ *                      2       - success
+ *
+ * GLOBAL PARAMETERS ACCESSED:
+ *              strcut TCB *readyq (RW), *waitq (RW)
+ *
+ * NOTE :
+ *	- Till now there is no scenario in which this function will be called.
+ *      - This function only adjusts the stateq_* fields in the TCB structure.
+ *      - It is assumed that the waitq_* fields will be adjusted before calling
+ *        this function.
+ */
+
+int tm_ready_to_wait(struct TCB *tcbptr)
+{
+        int     rc;
+        int     opl;
+
+        if (tcbptr == NULL) {
+                return 0;                                       /* ERROR */
+        }
+        opl = spl(3);
+
+        if (tcbptr->task_state != TS_READY) {
+                return 1;
+        }
+        /* unlink it from the waitq */
+        rc = unlink_from_stateq(tcbptr);
+        if (rc == 0) {
+                spx(opl);
+                return 0;                                       /* ERROR */
+        } else if (rc == 1) {
+                readyq = NULL;
+                add_to_stateq(tcbptr, waitq);
+        } else if (rc == 2)
+                add_to_stateq(tcbptr, waitq);
+        }
+
+        tcbptr->task_state = TS_WAIT;
+        spx(opl);
+        return 2;
+}
+
+/*
+ * FUNCTION NAME:
+ *              int     tm_running_to_wait(void);
+ *
+ * PARAMETER    :
+ *		None
+ *
+ * RETURN       :
+		None
+ *
+ * GLOBAL PARAMETERS ACCESSED:
+ *              struct TCB *waitq (RW)
+ *
+ * NOTE :
+ *      - This function is called by the running task.
+ *      - This function only adjusts the stateq_* fields in the TCB structure.
+ *      - It is assumed that the waitq_* fields will be adjusted before calling
+ *        this function.
+ */
+
+int tm_running_to_wait()
+{
+	/* Push the status register into the stack */
+	enter_critical_section();
+	/* Push all the registers into the stack. */
+	
+	if (current_task) {
+		add_to_stateq(current_task, waitq);
+	} else {
+		/* ERROR */
+	} 
+	   
+	/* Save the pushed registers into the context field of the TCB.
+	   Make	sure that the last element in the stack is the return address
+		to the called function.
+	   Save the SP into the context of the task.
+	   Change the task_state from TS_RUNNING to TS_WAIT.
+	   
+	   Issue a Jump to the tm_schedule() (scheduler) */
+	
+	/* The execution never return to this function */
+}
+
+/*
+ * FUNCTION NAME:
+ *              int     tm_schedule(void);
+ *
+ * PARAMETER    :
+ *              None
+ *
+ * RETURN       :
+ *		Does not return
+ *
+ * GLOBAL PARAMETERS ACCESSED:
+ *              strcut TCB *readyq (RW)
+ *
+ * NOTE :
+ *	This function is called by tm_running_to_wait() or it is called by the
+ *	ret_from_interrupt.
+ *	In both the cases the function does not return to the caller.
+ */
+
+int tm_schedule(void)
+{
+	struct TCB *tmp_tcbptr;
+	struct TCB *dispatch_tcbptr = NULL;
+
+	enter_critical_section();
+
+	/* If time_to_reschedule is set to 1, then tm_schedule is called by
+	   the ISR else it is called by tm_running_to_wait() function*/
+
+	if (time_to_reschedule) {
+		/* Reset the time_to_schedule variable */
+		/* In this case the context of the running task is not yet 
+		   saved */
+		/* The scheduler is running in the user stack, where the entire
+		   context of the application task is pushed into the stack 
+		   along with the return address to the appication.  */
+		/* Check whether there is any task in the ready queue whose
+		   priority is more than the current task. */
+
+		/* If there is any task to dispatch, then save the context of
+		   the current context into the context field of the TCB */
+		/* Make sure that the lastest element in the stack is the
+		   return address to the application */
+		/* Save the SP into the context of the task */
+		/* Change the task state from TS_RUNNING to TS_READY */
+		/* Add the task to ready queue */
+			tm_dispatch(dispatch_tcbptr);
+
+		/* If there is no task to dispatch, then pop the context
+		   of the current task from the user stack */
+		/* POP the status register */
+		/* Enable the interrupts, because the stored st have the
+		   interrupt enable flag diabled */
+		/* return from the function (which will resume the interrupted
+		   task */
+	} else {
+		/* In this case the context of the running task is already
+		   saved. */ 
+
+		/* Check whether there is any task in the ready queue */
+
+		/* If present get the highest priority task from the queue*/
+			tm_dispatch(dispatch_tcbptr);
+
+		/* If the ready queue is empty then sleep */
+		IMPORTANT: It is not completely known about the processor
+			   sleep and resume mechanism.
+	}
+}
+			   
+
+/*
+ * FUNCTION NAME:
+ *              int     tm_dispatch(struct TCB *dispatch_tcbptr);
+ *
+ * PARAMETER    :
+ *              None
+ *
+ * RETURN       :
+ *		Does not return
+ *
+ * GLOBAL PARAMETERS ACCESSED:
+ *              strcut TCB *readyq (RW)
+ *
+ * NOTE :
+ *	This function is called by the tm_schedule() only.
+ *	This function is called inside the critical section
+ */
+   
+void tm_dispatch(struct TCB *dispatch_tcb)
+{
+	current_task = dispatch_tcb;
+
+	/* The context of the previously running is already saved. 
+	   But still the execution is in the previous task's stack.
+	 */
+
+	/* dispatch all the events that are pending for the current_task */
+	dispatch_event(dispatch_tcb);
+	dispatch_tcb->task_state = TS_RUNNING;
+	/* Restore the SP for the current task. The latest element in the SP is
+	   the return address to the application */
+	/* Restore the context */
+	/* A RET instruction will start the execution for the application */
+
+}
+
+/* subfunctions - definitions */
+
+/*
+ * PARAMETER    :
+ *            	tid	- task id
+ *		tcbptr	- pointer to a valid TCB structure
+ *
+ * RETURN       :
+ *		struct TCB * 
+ *			NULL 	- error 
+ *			otherwise a valid pointer to the TCB structure
+ *
+ * NOTE :
+ *	- This function is not a re-entrant one.
+ *	- If required the caller should call this function in critical section.
+ */
+
+static struct TCB *get_tcb_stateq(int tid, struct TCB *tcbptr) 
+{
+	if (tcbptr == NULL) {
+		return NULL;
+	}
+	do {
+		if (tcbptr->task_id == tid) {
+			return tcbptr;
+		}
+		tcbptr = tcbptr->stateq_next;
+	} while (tcbptr != NULL);
+	
+	return NULL;
+}
+
+/*
+ * PARAMETER    :
+ *              tid     - task id
+ *              tcbptr  - pointer to a valid TCB structure
+ *
+ * RETURN       :
+ *              struct TCB *
+ *                      NULL    - failure
+ *                      otherwise a valid pointer to the TCB structure
+ *
+ * NOTE :
+ *	- This function is not a re-entrant one.
+ *	- If required the caller should call this function in critical section.
+ */
+
+static struct TCB *get_tcb_waitq(int tid, struct TCB *tcbptr)
+{
+	if (tcbptr == NULL) {
+		return NULL;
+	}
+	do {
+		if (tcbptr->task_id == tid) {
+			return tcbptr;
+		}
+		tcbptr = tcbptr->waitq_next;
+	} while (tcbptr != NULL);
+	
+	return NULL;
+}
+
+/*
+ * PARAMETER    :
+ *              tcbptr  - pointer to a valid TCB structure
+ *
+ * RETURN 	:
+ *		int rc
+ *			0 	- failure 
+ *			1	- The tcb is only one in the list
+ *			2	- success
+ *
+ *
+ * NOTE :
+ *	- This function is not a re-entrant one.
+ * 	- If required the caller should call this function in critical section.
+ */
+
+static void	unlink_from_stateq(struct TCB * tcbptr)
+{
+	struct TCB *prev_task;
+	struct TCB *next_task;
+	int	test_NULL;
+	
+	if (tcbptr == NULL) {
+		return 0;					/* ERROR */
+	}
+	prev_task = tcbptr->stateq_prev;
+	next_task = tcbptr->stateq_next;
+
+	if (prev_task != NULL) {
+		prev_task->stateq_next = next_task;
+		tcbptr->stateq_prev = NULL;
+		test_NULL++;
+	}
+	if (next_task != NULL) {
+		next_task->stateq_prev = prev_task
+		tcbptr->stateq_next = NULL;
+		test_NULL++;
+	}
+	if (!test_NULL) {
+		return 1;
+	}
+	
+	return 2;
+}
+	
+/*
+ * PARAMETER    :
+ *              tcbptr  - pointer to a valid TCB structure
+ *
+ * RETURN       :
+ *		int rc
+ *			0 	- failure
+ *			1	- Not linked to any other TCB structure	
+ *			2	- succcess
+ *
+ * NOTE :
+ *	- This function is not a re-entrant one.
+ * 	- If required the caller should call this function in critical section.
+ */
+
+static int     unlink_from_waitq(struct TCB * tcbptr)
+{
+        struct TCB *prev_task;
+        struct TCB *next_task;
+	int	test_NULL = 0;
+
+        if (tcbptr == NULL) {
+                return 0;		                         /* ERROR */
+        }
+        prev_task = tcbptr->waitq_prev;
+        next_task = tcbptr->waitq_next;
+
+        if (prev_task != NULL) {
+                prev_task->waitq_next = next_task;
+		tcbptr->waitq_prev = NULL;
+		test_NULL++;
+        }
+        if (next_task != NULL) {
+                next_task->waitq_prev = prev_task;
+		tcbptr->waitq_next = NULL;
+		test_NULL++;
+        }
+	if (!test_NULL) {
+		return 1;
+	}
+
+        return 2;
+}
+
+/*
+ * PARAMETER    :
+ * 		tcb_list- A valid stateq list
+ *              tcbptr  - The tcbptr that has to added to the list
+ *
+ * RETURN       :
+ *             	int rc 
+ *			0	- failure
+ *			1	- success
+ *
+ * NOTE :
+ * 	- This function is not re-entrant.
+ * 	- If required the called should call this function in critical section
+ */
+
+static void	add_to_stateq(struct TCB *tcbptr, struct TCB *tcb_list)
+{
+	if (tcbptr == NULL) {
+		return 0;					/* ERROR */
+	}
+
+	if (tcb_list) {
+		while (tcb_list->stateq_next) {
+			tcb_list = tcb_list->stateq_next;
+		}
+		tcb_list->stateq_next = tcbptr;
+		tcbptr->stateq_prev = tcb_list;
+	} else {
+		tcb_list = tcbptr;
+	}
+
+	return 1;
+}
+
+/*
+ * PARAMETER    :
+ *              tcb_list- A valid waitq list
+ *              tcbptr  - The tcbptr that has to added to the list
+ *
+ * RETURN       :
+ *              int rc
+ *                      0       - failure
+ *                      1	- success
+ *
+ * NOTE :
+ * 	- This function is not re-entrant.
+ * 	- If required the called should call this function in critical section
+ */
+
+static int      add_to_waitq(struct TCB *tcbptr, struct TCB *tcb_list)
+{
+        if (tcbptr == NULL) {
+                return 0;                                        /* ERROR */
+        }
+
+	if (tcb_list) {
+        	while (tcb_list->waitq_next) {
+                	tcb_list = tcb_list->waitq_next;
+        	}
+        	tcb_list->waitq_next = tcbptr;
+        	tcbptr->waitq_prev = tcb_list;
+	} else {
+		tcb_list = tcbptr;
+	}
+
+        return 1;
+}

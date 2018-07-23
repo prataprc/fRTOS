@@ -1,0 +1,103 @@
+uK - Task Management:
+---------------------
+
+
+Tasks profile:
+
+1. SRC task - which needs to be scheduled [atleast] once every 10ms.
+2. Play task - which needs to be scheduled as soon as one of its output 
+   buffers is empty i.e., the moment it calls a read (or) when there is more 
+   data in its read-buffers to perform C3 decoding.
+3. Player application task - which needs to be scheduled as soon as there is 
+   an event pending for its processing.
+4. Volume manager task - which needs to be scheduled as soon as there is an
+   event pending for its processing
+
+
+TCB fields:
+
+typedef enum { PC, SP, R0, R1, R2, /* ... */ } proc_reg;
+
+
+typedef struct process_context {
+	proc_reg	pregs[N_SAVED_REGS];	/* PC, SP and any other 
+						   registers */
+	/* rest of the context if any */
+} context;
+
+
+struct TCB {
+	/* doubly linked list of all TCBs in the system */
+	struct	TCB *stateq_prev;
+	struct	TCB *stateq_next;
+
+	/* task identity */
+	int	task_id;
+	int	task_name;
+
+	/* scheduler related */
+	int	task_state;		/* One of NON_EXISTENT, READY, RUNNING, 					   WAITING		*/
+	struct	TCB *waitq_prev;	/* A task is, at any time on one of 
+					   these queues:	*/
+	struct	TCB *waitq_next;	/* ready_queue, wait_queue */ 
+	int	sleep_channel;		/* Channel on which the task is 
+					   currently sleeping	*/
+	int	task_pri;		/* Priority: lower numerical value => 
+					   a higher priority	*/
+	int	raised_pri;		/* Priority raised to handle the 
+					   inversion problem	*/
+	int	total_run_ticks;	/* #ticks this task has used since it 
+					   has been spawned	*/
+	int	current_run_ticks;	/* #ticks since this task started its 
+					   latest run	*/
+
+	/* context related */
+	int	stack_size;		/* user stack size in #bytes	*/
+	char	*stack_base;		/* user stack base address */
+
+	context	saved_cxt;		/* for saving/restoring task context 
+					   during switches	*/
+
+	/* filesystem related */
+	files_info *files;		/* files_info == files_struct in 
+					   file_system.h */
+
+	/* event management */
+	struct  event_table	*event_list;
+	int 	subsribed_events;	/* for the alternate design */
+	int	event_pending;		/* for the alternate design */
+
+	/* miscellaneous */
+	/* ... */
+};
+
+extern	struct	TCB	*current_task;	/* running task; For uK-FS internal 
+					   use */
+
+Scheduling policy:
+
+ The uKernel employs pre-emptive priority-based scheduling. The CPU is 
+ allocated to the highest priority task as soon as all the other resources 
+ required by it are available.
+ Tasks of the same priority are scheduled in FIFO order.
+
+ State transitions:
+
+ sleep() moves the calling task from running to wait state (and to the wait 
+ queue) wakeup() moves all tasks waiting on a channel to ready state (and to 
+ the ready queue) task_suspend() moves a task from running state to wait state 
+ (and to the wait queue) task_resume() moves a task from wait state to ready 
+ state (and to the ready queue) receive_message() may move a task from running 
+ to wait state (and to the wait queue) send_message() may move a task from wait
+ state to ready state (and to the ready queue) down_semaphore() may move a task
+ from running to wait state (and to the wait queue) up_semaphore() may move a 
+ task from wait state to ready state (and to the ready queue) I/O request such 
+ as read()/readdir()/read_mbx()/write_mbx() may cause the calling task to
+ be moved to a wait state.
+
+ At the end of each of these transitions, the scheduler is activated to pick up
+ the highest priority task from the ready queue and allocate the CPU to it, if 
+ the current task is of a lower priority.
+
+ The scheduler is also run periodically (say once every 5ms).
+ 

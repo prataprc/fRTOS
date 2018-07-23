@@ -1,0 +1,325 @@
+/* Low level design of the semaphore. */
+
+Data Structure.
+--------------
+struct sem_list_node {
+	int sem_name; /* Name of semaphore. */
+	int sem_id; /* ID of semaphore. */
+	int init_count; /* Initial count of semaphore. */
+	int sem_count; /* Current value of semaphore. */
+	struct tcb *tcbptr; /* Pointer to waiting task queue. */ 
+	sem_table *next; /* Pointer to next semaphore in list. */
+};
+
+Global variables.
+-----------------
+static int sem_count = 0;/* Unique count of the semaphore ID. */
+static struct sem_list_node *sem_list_head, *sem_list_tail; /* Pointer to capture start and end of the semaphore list. */
+
+/* Id of memory pool from which memory is allocaed. */
+#define KERNEL_MEMORY_POOL_ID 0
+
+
+Name : create_semaphore
+Description : Creates a semaphore.
+I/P Parameter : 
+	name : Name of the semaphore
+	init_val : Initial value of semaphore
+O/P Parameter :	
+	*sem_id : ID of created semaphore
+Return :
+	E_INITIAL_COUNT : Invalid initial count
+	E_NO_MEM        : No memory to create semaphore
+	E_INVALID_NAME  : Name already exist	
+	    0           : Success
+
+int create_semaphore(int name, int init_val, int *sem_id)
+{
+	struct sem_list_node *create_sem_ptr;
+
+	/* Check whether count is valid. */ 
+	if(init_val <= 0)
+		RETURN(E_INIT_COUNT);
+	
+	enter_critical_section();
+	/* Check whether given name already exist in semaphore list. If so return error. */
+	if(name != NULLP && sem_list_head != NULLP)
+	{
+		create_sem_ptr = findkey(sem_list_head, name);
+	}
+	exit_critical_section();
+	/* If name already exist return error. */ 
+	if(create_sem_ptr != NULLP)
+		RETURN(E_INVALID_NAME);
+	enter_critical_section();	
+	/* Allocate memory required to create new semaphore. */
+	rc = alloc_mem(KERNEL_MEMORY_POOL_ID, &create_sem_ptr, sizeof(struct sem_list_node);
+	exit_critical_section();	
+	/* Check whether memory is allocated, if not return error. */
+	if(rc == -1)
+		RETURN(E_NO_MEM);
+	enter_critical_section();
+	/*Assign values. */
+	create_sem_ptr->sem_name = name;
+	create_sem_ptr->sem_id = count++;
+	*sem_id = create_sem_ptr->sem_id;
+	create_sem_ptr->init_count = init_count;
+	create_sem_ptr->sem_count = init_count;
+	create_sem_ptr->next = NULLP:
+
+	/* Add semaphore to the list. */
+	if(sem_list_head != NULLP)
+	{
+		sem_list_tail->next = create_sem_ptr;
+		sem_list_tail = create_sem_ptr;
+	}
+	else
+	{
+		sem_list_head = create_sem_ptr;
+	        sem_list_tail = sem_list_head;
+	}
+	exit_critical_section();
+	return(0);
+}
+	
+Name : delete_semaphore
+Description : Deletes a semaphore
+I/P Parameter : 
+	sem_id : Id of semaphore to be deleted 
+O/P Parameter :
+	NONE
+Return :
+	E_ID_INV : Invalid semaphore ID
+	   0     : Success	
+			
+int delete_semaphore(int sem_id)
+{
+	struct sem_list_node *sem_delete_ptr, *sem_search_ptr;
+
+	enter_critical_section();
+	/* If no semaphore in the list return error. */
+	if(sem_list_head == NULLP)
+		RETURN(E_ID_INV);
+	else {
+	/* Using the given sem_id find the semaphore from the list. */
+		sem_delete_ptr = findkey(sem_list_head, sem_id);
+	}
+	/* If no sem_id matches the one in the list return error. */
+	if(sem_delete_ptr == NULLP)
+		RETURN(E_ID_INV);
+
+	/* Remove the semaphore from the list and adjust the list. */
+	sem_search_ptr = sem_list_head;
+	if(sem_search_ptr == sem_delete_ptr) {
+		sem_list_head = sem_delete_ptr->next;
+	}
+	else {
+		while(sem_search_ptr != NULLP) {
+			if(sem_search_ptr->next == sem_delete_ptr)
+			{
+				sem_search_ptr->next = sem_delete_ptr->next;
+				break;
+			}
+			sem_search_ptr = sem_search_ptr->next;
+	     	}
+	}	
+			
+	/* If there are task waiting for this semaphore then wake them all. */
+	if(sem_delete_ptr->tcbptr != NULLP)
+	{
+		do {
+			tcb_wakeup_ptr = workptr->tcbptr;
+			wakeup_task(tcb_wakeup_ptr);
+			tcb_wakeup_ptr = tcb_wakeup_ptr->stateq_next;
+		   }while(tcb_wakeup_ptr != NULLP);
+	}
+	/* Free the pointer. */
+	free(sem_delete_ptr);
+	exit_critical_section();
+	
+	return(0);
+}
+
+Name : sem_name_to_id
+Description : Gets the ID for a semapore
+I/P Parameter :
+	name : Name of semaphore
+O/P Parameter :
+	*sem_id : ID of the specified semaphore
+Return :
+	E_NM_INV : Invalid semaphore name
+	    0      : Success
+
+int sem_name_to_id(int name, int *sem_id)
+{
+	struct sem_list_node *sem_search_ptr;
+
+	/* If name is null then return error. */	
+	if(name == NULLP)
+		RETURN(E_NM_INV);
+
+	enter_critical_section();
+	/* Using given name find semaphore from the list. */
+	if(sem_list_head == NULLP)
+		RETURN(E_NM_INV):
+	else {
+		sem_search_ptr = findkey(sem_list_head, name);
+	}
+	exit_critical_section();
+	/* If no name matches the name in the list, return error. */
+	if(sem_search_ptr == -1)
+		RETURN(E_NM_INV);
+	/* Return the semaphore id. */
+	*sem_id = sem_search_ptr->sem_id;
+	return(0);
+}
+			
+Name : down_semaphore
+Description : Decrements the semaphore value and if semaphore value is negative
+		after decrement the task is put in the waiting queue.
+I/P Parameter : 
+	sem_id : ID of the semaphore
+O/P Parameter :
+	*sem_val : Value of semaphore count after decrement
+Return :
+	E_ID_INV : Invalid semaphore ID 
+	   0     : Success
+	
+int down_semaphore(int sem_id, int *sem_val)
+{
+	struct sem_list_node *sem_search_ptr;
+	struct tcb *tcb_search_ptr, *tcb_tmp_ptr;	
+
+	/* If no semaphore in the list return error. */
+	if(sem_list_head == NULLP){
+		RETURN(E_ID_INV);
+	}
+	else {
+	/* Using the given semaphore id find the semaphore from the list. */
+		sem_search_ptr = findkey(sem_list_head, sem_id);
+	}
+	/* If no id matches the one in the list return error. */
+	if(sem_search_ptr == NULLP)
+		RETURN(E_ID_INV);
+	enter_critical_section();
+	/* If current value of the semaphore is greater than zero decrement the count by one and return sucess. */
+	if(sem_search_ptr->sem_count > 0) {
+		semptr->sem_count--;
+		*sem_val = sem_search_ptr->sem_count;
+		exit_critical_section();
+		return 0;
+	}
+	else {
+	/* If current value of semaphore is zero then put the task int he queue with increasing order of priority number. */
+		enter_critical_section();
+		if(sem_search_ptr->tcbptr == NULLP) {
+			sem_search_ptr->tcbptr = current_task;
+			current_task->stateq_prev = NULLP;
+			current_task->stateq_next = NULLP;
+		}
+		else
+		{
+			tcb_search_ptr = sem_search_ptr->tcbptr;
+			if(tcb_search_ptr->task_pri > current_task->task_pri)
+			{
+				tcb_search_ptr->stateq_prev = current_task;
+				current_task->stateq_next = tcb_search_ptr;
+				sem_search_ptr->tcbpptr = current_task;
+			}
+			else
+			{
+				while(tcb_search_ptr->stateq_next != NULLP)
+				{
+					if(tcb_search_ptr->task_pri > current_task->task_pri)
+					{
+						current_task->stateq_next = tcb_search_ptr;
+						tcb_tmp_ptr = tcb_search_ptr->stateq_prev;
+						tcb_tmp_ptr->stateq_next = current_task;
+						current_task->stateq_prev = tcb_tmp_ptr;
+						tcb_search_ptr->stateq_prev = current_task;
+						exit_critical_section();
+						return(0);
+					}
+				}
+				enter_critical_section();
+				tcb_search_ptr->stateq_next = current_task;
+				current_task->stateq_prev = tcb_search_ptr;
+				current_task->stateq_next = NULLP;
+				exit_critical_section();
+			}	
+						 
+	     }
+		
+				return(0);
+	}	
+}
+
+Name : up_semaphore
+Description : Increments the value of the semaphore.
+I/P Parameter : 
+	sem_id : ID of the semaphore
+O/P Parameter :
+	*sem_val : Value of the semaphore after increment.
+Return :
+	E_ID_INV : Invalid semaphore ID
+	E_UP_LIM : Semaphore value overflow
+	   0     : Sucess
+	
+up_semphore(int sem_id, int *sem_val)
+{
+	struct sem_list_node *sem_search_ptr;
+	struct tcb *tcb_wakeup_ptr;
+
+	/* If no semaphore in the list return error. */
+	if(sem_list_head == NULLP)
+		RETURN(E_ID_INV);
+	}
+	else {
+	/* Using the given semaphore id find the semaphore from the list. */
+		sem_search_ptr = findkey(sem_list_head, sem_id);
+	}
+	/* If no id matches the one in the list return error. */
+	if(sem_search_ptr == NULLP)
+		return(E_ID_INV);
+	/* if initial count and the semaphore count are same return overflow. */
+	if(sem_search_ptr->sem_count == sem_search_ptr->init_count)
+		retrun(E_UP_LIM);
+	
+	/* Inccrement the semaphore count by one and send the same. */
+	sem_search_ptr->sem_count++;
+	*sem_val = sem_search_ptr->sem_count;
+
+	/* If there are task waiting for this semaphore count then remove the one from the head of the list and return, since this has the highest priority. */
+	if(sem_search_ptr->tcbptr != NULLP)
+	{
+		tcb_wakeup_ptr = sem_search_ptr->tcbptr;	
+		wakeup_task(tcb_wakeup_ptr);
+		sem_search_ptr->tcbptr= tcb_wakeup_ptr->stateq_next;
+		tcb_wakeup_ptr = sem_search_ptr->tcbptr;	
+		tcb_wakeup_ptr->stateq_prev = NULLP;	
+	}
+	return(0);
+}
+		
+Name : sem_findkey
+Description :Finds semaphore with passed key.
+I/P Parameters :
+        workptr : Pointer to the top of the list
+        mbx_id  : ID of the semaphore
+O/P Parameters :
+        workptr : Pointer of semaphore that matches the key.
+Return:
+        scan_node_ptr : Returns address of the list containing sem_id.
+
+struct sem_list_node * sem_findkey(struct sem_list_node *sem_start_ptr, int sem_id)
+{
+
+        while(sem_start_ptr != NULLP) {
+                if(sem_start_ptr->sem_id == sem_id) {
+                        return(sem_start_ptr);
+                }
+                sem_start_ptr = sem_start_ptr->next;
+        }
+        return(sem_start_ptr_);
+}
+

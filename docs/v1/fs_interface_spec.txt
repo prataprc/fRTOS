@@ -1,0 +1,169 @@
+This doc only gives the skeleton of the interface specification for the 
+FS and Psudo FS
+------------------------------------------------------------------------------
+ Let us divide the File System functionalities into two parts based on the
+ state of operation.
+	1. FS functions that resides in the DSP2
+	2. Psuedo FS
+
+ (1) Interfaces supported by FS resising in the DSP2.
+	* opendir()
+	* readdir()
+	* closedir()
+	* get_extent_details()
+	* open()
+	* read()
+	* close()
+
+ (2) Interfaces supported by Psuedo FS.
+	* psuedo_open()
+	* psuedo_read()
+	* psuedo_close()
+	* psuedo_lseek()
+	
+ Detail Interface Specification:
+
+ (For 1):
+
+opendir():
+------------
+	
+ struct file_desc * opendir(void * file_name | open_details, int type)
+	
+ parameters:
+
+	type		: Tells whether the first parameter is file_name or
+			  open_details.
+	file_name  	: Obsolute path name with file name (always unicode)
+	open_details	: Which was returned by readdir.
+
+ return value:
+	
+	pointer to the file descriptor structure.
+
+readdir():
+----------
+
+ struct dir_entry * readdir(struct xyz * file_descriptor, int entry_no)
+
+ paramters:
+
+	file_descriptor	: The opened directory's file descriptor
+	entry_no	: The index of the directory entry that is desired
+
+ return value:
+	
+	Pointer to the directory entry structure.
+	
+	struct open_details {
+		int	sector_no; /* starting sector of the extent
+					(data starts from here) */
+		int	offset_in_sector; /* bytes offset into the extent */
+	};
+	struct dir_entry {
+		int	flags;
+		int 	fn_len;
+		void 	*file_name;
+		
+		struct open_details od;
+	};
+
+ 
+closedir():
+-----------
+
+ int closedir(struct file_desc *fs)
+
+open():
+-------
+
+ struct file_desc * open(void * file_name | open_details, int type)
+	
+ parameters:
+
+	type		: Tells whether the first parameter is file_name or
+			  open_details.
+	file_name  	: Obsolute path name with file name (always unicode)
+	open_details	: Which was returned by readdir.
+
+ return value:
+	
+	pointer to the file descriptor structure.
+
+read():
+-------
+
+ int read(struct file_desc fd, int no_of_bytes, char * buffer)
+
+ Paramters:
+
+	fd		: The file descriptor from which the data has to be read
+	no_of_bytes	: No of bytes to be read
+	buffer		: buffer area to which the data has to be copied.
+
+ Return value:
+
+	No of bytes read (past tense).
+
+get_extent_details():
+---------------------
+
+ struct extent_details * 
+	get_extent_details(void * file_name | open_details, int type) 
+
+ parameters:
+
+	type		: Tells whether the first parameter is file_name or
+			  open_details.
+	file_name  	: Obsolute path name with file name (always unicode)
+	open_details	: Which was returned by readdir.
+
+ Return value:
+
+	struct extent_loc {
+		int starting_sector;
+		int no_of_bytes;
+	}
+	struct extent_details {
+		int	no_of_extents;
+		struct extent_loc array_of_ext_details[no_of_extents];
+	}
+
+ (For 2):
+
+psuedo_open():
+-------------- 
+
+ int open(int id)
+ 
+ Paramter:
+	id 	: This could be an index into the play list (if the play list 
+		  is going to be supported in DSP1) or an index into the 
+		  file table.
+
+psuedo_copy_read():
+-------------------
+
+ int psuedo_copy_read(int no_of_bytes, char * buffer)
+
+ parameters:
+
+	no_of_bytes 	: No of bytes to read.
+	buffer		: buffer address to which the data has to be copied
+
+ return value:
+	
+	No of bytes read
+
+psuedo_read():
+--------------
+
+ char * psuedo_read(int no_of_bytes) 
+
+ paramters:
+	no_of_bytes	: No of bytes to read
+
+ Return value:
+
+	Buffer address containing the no of bytes.
+

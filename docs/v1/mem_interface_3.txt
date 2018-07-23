@@ -1,0 +1,161 @@
+Memory Management Interfaces
+============================
+
+Main interfaces provided are as follows :
+
+
+create_mem_pool - Create a user memory pool
+delete_mem_pool - Delete a user memory pool
+mem_alloc       - allocate a block from a memory pool  
+mem_free        - free a block from a memory pool  
+mem_status	- get the available memory from a  memory pool
+
+*)Create a memory pool 
+
+int create_mem_pool(int *mem_pool_id,int size_in_words,int block_size, int mem_attrs)
+
+
+Parameters
+mem_pool_id   Memory Pool ID returned by the m-kernel.
+size_in_words Size of the memory pool in words
+block_size    block_size indicates the size in words that can be specified by the user.
+If block_size = 0 ,then a default value specified by the kernel is used. 
+mem_attrs  Indicates which memory block is to be used (either RAM0 or RAM1 )
+
+defined by macros
+RAMO_MEMATTR - for RAM0
+RAM1_MEMATTR - for RAM1
+
+
+NOTE : Here we assume that two different memory banks used (RAM0 or RAM1 or DRAM of RAM0/RAM1),can be specified  by the user (application). It is assumed that we will have a maximum of 10 memory pools per memory bank. 
+So memory pools in RAM0 have ID's from 1 to 10 and pools in RAM1 have ID's from 11 to 20. This can be changed later according to the memory requirement.
+The Kernel memory pool has an ID of 0.
+
+Return value 
+	0 : success
+	-1: failure 
+
+Error codes
+	ERR_INV_ATTR	  MEMORY_ERRNO_BASE + 1 ( a value other than 0 or 1 is specified for mem_attrs)
+
+	ERR_INV_MPOOL_SIZE  MEMORY_ERRNO_BASE + 2 
+	ERR_NO_MEM	    MEMORY_ERRNO_BASE + 3 (Insufficient memory available)
+
+	ERR_INV_BLOCKSIZE   MEMORY_ERRNO_BASE + 4 ( Blocksize greater than pool size)
+
+
+
+Description
+A memory pool of the specified size is created in either RAM0 or
+RAM1 memory area as specified and a  mem_pool_id is assigned. 
+
+usage.
+mem_pool_id should be an 'int *' as we will write an integer mem_pool_id into that value-result parameter. For instance:
+   
+   ...
+   ...
+   int    my_pool_id;
+
+   rc = create_mem_pool (&my_pool_id, 2048,0,RAM0_MEMATTR)
+         
+   
+   ...
+   ...
+
+
+*)Delete a memory pool
+
+int delete_mem_pool(int mem_pool_id)
+
+Parameters
+mem_pool_id  Memory Pool ID of the memory pool to be removed.
+
+Return value 
+	0 : success
+	-1: failure 
+
+Error codes
+	ERR_ALLOC      MEMORY_ERRNO_BASE + 7 (blocks still allocated within the pool)
+	ERR_INV_MPOOL_ID MEMORY_ERRNO_BASE + 5 (Invalid mem pool ID)
+
+Description.
+Used to delete  a memory pool specifed by mem_pool_id.
+
+
+*) int mem_alloc (int mem_pool_id, int** start_address, int size_in_words)
+
+Parameters
+mem_pool_id   Memory Pool ID.
+start address start address of the block allocated.
+size_in_words size of the memory chunk required (in words)
+
+
+return value
+	0: success
+	-1: failure
+
+Error codes
+	
+	ERR_INV_MPOOL_ID MEMORY_ERRNO_BASE + 5 (Invalid mem pool ID)
+	ERR_NO_MEM	 MEMORY_ERRNO_BASE + 3 (Insufficient memory available) 
+
+Description
+Used to allocate a block of size size_in_words from the user memory pool specified by mem_pool_id. 
+start_address is filled with the start address of the block that has been allocated.
+
+usage.
+start_address should be an 'int **' as we will write an integer word address
+   into that value-result parameter. For instance:
+
+   ...
+   ...
+   int    *buff_addr;
+
+   if (mem_alloc(my_pool_id, &buff_addr, 255) == 0) {
+          strncpy(buff_addr, full_path_name, 255);
+          buff_addr[254] = NULL;
+   }
+   ...
+   ...
+
+
+
+NOTE: The returned address word is word-aligned.
+
+*) int mem_free(int mem_pool_id,int *start_address)
+
+Parameters:
+mem_pool_id    Memory Pool ID 
+start_address  address of the block to be freed.
+
+return value
+	0: success
+	-1: failure 
+
+Error codes
+	
+	ERR_INV_MPOOL_ID MEMORY_ERRNO_BASE + 5 (Invalid mem pool ID)
+	ERR_NOT_ALLOC	 MEMORY_ERRNO_BASE + 6 (Invalid start address specified)
+
+
+Description
+Releases the block specified by start_address.
+
+*) int mem_status(int mem_pool_id, int *avail_mem_in_bytes)
+return value
+	0: success
+	-1: failure 
+
+
+Description
+Checks the memory pool specified by mem_pool_id for the available memory from that pool.
+avail_mem_in_bytes is filled with the available memory from that pool.
+
+Error codes
+	
+	ERR_INV_MPOOL_ID MEMORY_ERRNO_BASE + 5 (Invalid mem pool ID)
+
+
+/*** End of file ***/
+
+
